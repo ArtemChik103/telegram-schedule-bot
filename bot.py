@@ -6,20 +6,20 @@ import sqlite3
 import traceback
 import locale
 import asyncio
-import time # <--- Добавили для работы с часовыми поясами
+import time
 from datetime import datetime, timedelta, time as dt_time
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext, CallbackQueryHandler
 
-# --- УСТАНОВКА ЧАСОВОГО ПОЯСА (ВАЖНО!) ---
-# Принудительно ставим время Благовещенска (UTC+9) для всего скрипта
+# --- УСТАНОВКА ЧАСОВОГО ПОЯСА ---
+# Принудительно ставим время (UTC+9 для Благовещенска)
 os.environ['TZ'] = 'Asia/Yakutsk'
 try:
     time.tzset()
 except AttributeError:
-    pass # На Windows это не сработает, но у вас Linux, так что все ок
+    pass
 
 # --- Конфигурация ---
 load_dotenv()
@@ -139,39 +139,64 @@ def get_week_type(schedule_data, target_date):
         return 2 if current_week_type == 1 else 1
     return current_week_type
 
+# ГЛАВНОЕ ИСПРАВЛЕНИЕ: Единая функция фильтрации для всех команд
+def get_valid_lessons(schedule_data, target_date):
+    """Возвращает список только ВАЛИДНЫХ пар на конкретную дату."""
+    weekday = target_date.isoweekday()
+    week_type = get_week_type(schedule_data, target_date)
+    
+    raw_lessons = schedule_data.get('timetable_tamplate_lines', [])
+    valid_lessons = []
+    
+    for l in raw_lessons:
+        # Проверка дня недели и четности
+        if l['weekday'] != weekday:
+            continue
+        if l['parity'] != 0 and l['parity'] != week_type:
+            continue
+        
+        # СТРОГАЯ ФИЛЬТРАЦИЯ ПУСТЫХ СТРОК
+        # Если discipline_str равен None, пустой строке или пробелам - пропускаем
+        discipline = l.get('discipline_str')
+        if not discipline or not str(discipline).strip():
+            continue
+            
+        valid_lessons.append(l)
+        
+    return valid_lessons
+
 def get_current_lesson_info(schedule_data):
     now = datetime.now().time()
     today_date = datetime.now()
-    weekday = today_date.isoweekday()
-    week_type = get_week_type(schedule_data, today_date)
-
-    lessons_today = [
-        l for l in schedule_data.get('timetable_tamplate_lines', [])
-        if l['weekday'] == weekday and (l['parity'] == 0 or l['parity'] == week_type)
-    ]
+    
+    # Используем общую функцию, чтобы логика совпадала с "На сегодня"
+    lessons_today = get_valid_lessons(schedule_data, today_date)
     
     if not lessons_today:
         return "✅ Сегодня занятий нет, отдыхай!"
 
     lessons_today.sort(key=lambda x: x['lesson'])
-    lesson_map = {l['lesson']: l for l in lessons_today}
+    
     sorted_slots = sorted(SCHEDULE_TIMES_PARSED.items())
 
     for num, (start, end) in sorted_slots:
         if start <= now <= end:
-            lesson = lesson_map.get(num)
-            if lesson:
-                # Добавил проверку на пустые значения "or '...'"
-                subj = lesson.get('discipline_str') or 'Не указан'
-                aud = lesson.get('classroom_str') or '?'
-                teach = lesson.get('person_str') or ''
+            # Ищем пары, которые идут прямо сейчас
+            current_lessons = [l for l in lessons_today if l['lesson'] == num]
+            
+            if current_lessons:
+                subjects = " / ".join([l.get('discipline_str') for l in current_lessons])
+                classrooms = " / ".join([l.get('classroom_str') or '?' for l in current_lessons])
+                teachers = " / ".join([l.get('person_str') or '' for l in current_lessons])
+                
                 return (
                     f"🔴 **Сейчас идет {num}-я пара** ({SCHEDULE_TIMES_STR[num]})\n"
-                    f"📚 {subj}\n"
-                    f"🚪 Ауд. {aud}\n"
-                    f"👨‍🏫 {teach}"
+                    f"📚 {subjects}\n"
+                    f"🚪 Ауд. {classrooms}\n"
+                    f"👨‍🏫 {teachers}"
                 )
             else:
+                # Пары на сегодня есть, но конкретно сейчас - окно
                 return f"🕒 Сейчас время {num}-й пары, но по расписанию у вас **окно**."
 
     for i in range(len(sorted_slots) - 1):
@@ -179,15 +204,18 @@ def get_current_lesson_info(schedule_data):
         next_num, (next_start, _) = sorted_slots[i+1]
         
         if current_end < now < next_start:
-            next_lesson = lesson_map.get(next_num)
+            # Перемена
+            next_lessons = [l for l in lessons_today if l['lesson'] == next_num]
+            
             status = f"☕ **Сейчас перемена** (до {next_start.strftime('%H:%M')})"
-            if next_lesson:
-                subj = next_lesson.get('discipline_str') or 'Не указан'
-                aud = next_lesson.get('classroom_str') or '?'
+            
+            if next_lessons:
+                subjects = " / ".join([l.get('discipline_str') for l in next_lessons])
+                classrooms = " / ".join([l.get('classroom_str') or '?' for l in next_lessons])
                 status += (
                     f"\n\n🔜 **Следующая пара ({next_num}-я):**\n"
-                    f"📚 {subj}\n"
-                    f"🚪 {aud}"
+                    f"📚 {subjects}\n"
+                    f"🚪 {classrooms}"
                 )
             else:
                 status += f"\n\n🔜 Следующая пара ({next_num}-я) — **Окно**."
@@ -206,14 +234,17 @@ def get_current_lesson_info(schedule_data):
 
     return "🔎 Не могу определить статус."
 
-def format_day_schedule(schedule_data, day_of_week, day_name, week_type):
+def format_day_schedule(schedule_data, target_date):
+    weekday = target_date.isoweekday()
+    week_type = get_week_type(schedule_data, target_date)
+    day_name = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"][weekday-1]
     week_name = f"Неделя {week_type}"
+    
     header = f"**{day_name} ({week_name})**\n\n"
     
-    lessons_for_day = [
-        lesson for lesson in schedule_data.get('timetable_tamplate_lines', [])
-        if lesson['weekday'] == day_of_week and (lesson['parity'] == 0 or lesson['parity'] == week_type) and lesson.get('discipline_str')
-    ]
+    # Используем ту же функцию фильтрации, что и для "Сейчас"
+    lessons_for_day = get_valid_lessons(schedule_data, target_date)
+    
     if not lessons_for_day:
         return f"**{day_name} ({week_name})**\n\n✅ В этот день занятий нет."
 
@@ -223,8 +254,8 @@ def format_day_schedule(schedule_data, day_of_week, day_name, week_type):
     for lesson in lessons_for_day:
         lesson_number = lesson['lesson']
         time_string = SCHEDULE_TIMES_STR.get(lesson_number, "Время не указано")
-        # Исправление пустых полей
-        subject = lesson.get('discipline_str') or 'Не указан'
+        
+        subject = lesson.get('discipline_str')
         teacher = lesson.get('person_str') or 'Не указан'
         classroom = lesson.get('classroom_str') or 'Не указана'
         
@@ -236,12 +267,6 @@ def format_day_schedule(schedule_data, day_of_week, day_name, week_type):
         )
             
     return header + "\n".join(schedule_parts)
-
-def get_schedule_for_date(target_date, schedule_data):
-    weekday = target_date.isoweekday()
-    week_type = get_week_type(schedule_data, target_date)
-    day_name = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"][weekday-1]
-    return format_day_schedule(schedule_data, weekday, day_name, week_type)
 
 # --- Обработчики Telegram ---
 
@@ -293,10 +318,10 @@ async def handle_message(update: Update, context: CallbackContext) -> None:
     if text == "Сейчас":
         message = get_current_lesson_info(schedule_data)
     elif text == "На сегодня":
-        message = get_schedule_for_date(today, schedule_data)
+        message = format_day_schedule(schedule_data, today)
     elif text == "На завтра":
         tomorrow = today + timedelta(days=1)
-        message = get_schedule_for_date(tomorrow, schedule_data)
+        message = format_day_schedule(schedule_data, tomorrow)
     elif text == "Эта неделя":
         await show_week_schedule(update, context, is_next_week=False)
         return
@@ -339,7 +364,7 @@ async def button_callback(update: Update, context: CallbackContext) -> None:
         await query.edit_message_text("Данные недоступны.")
         return
 
-    message = get_schedule_for_date(target_date, schedule_data)
+    message = format_day_schedule(schedule_data, target_date)
     
     if is_old:
         message = "⚠️ **Нет связи с АмГУ.** (Старые данные)\n\n" + message
