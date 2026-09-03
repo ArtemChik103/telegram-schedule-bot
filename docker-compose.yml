@@ -1,0 +1,12 @@
+services:
+  schedule-bot:
+    build: .
+    container_name: amsu-schedule-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - TZ=Asia/Yakutsk
+    volumes:
+      # Сохраняем базу данных на хосте
+      - ./bot_data.db:/app/bot_data.db

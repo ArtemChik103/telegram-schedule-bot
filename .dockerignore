@@ -1,0 +1,13 @@
+.git
+.gitignore
+.env
+.env.*
+bot_data.db*
+schedule_cache.json
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.ruff_cache
+tests
+*.md
