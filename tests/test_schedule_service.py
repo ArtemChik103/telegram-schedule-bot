@@ -188,6 +188,38 @@ def test_format_day_schedule():
     assert "08:15–09:45" in text
 
 
+def test_format_day_schedule_with_stream():
+    sample_data = {
+        "current_week": 1,
+        "schedule_lines": [
+            {
+                "lesson": 1,
+                "begin_time": "2000-01-01T08:15:00.000Z",
+                "end_time": "2000-01-01T09:45:00.000Z",
+            }
+        ],
+        "timetable_tamplate_lines": [
+            {
+                "weekday": 1,
+                "parity": 1,
+                "lesson": 1,
+                "discipline_str": "Проектирование интерфейсов",
+                "person_str": "Рябова С.Н.",
+                "classroom_str": "327",
+                "subgroup": 0,
+                "stream_with": ["ИС232"],
+            }
+        ],
+    }
+
+    today = datetime.now().date()
+    current_monday = today - timedelta(days=today.weekday())
+
+    text = format_day_schedule(sample_data, target_date=current_monday)
+    assert "Поток с группой:" in text
+    assert "ИС232" in text
+
+
 def test_format_bell_schedule():
     from src.services.schedule_service import format_bell_schedule
     sample_data = {

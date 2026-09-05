@@ -12,7 +12,7 @@ def get_main_reply_keyboard() -> ReplyKeyboardMarkup:
         ["🔴 Сейчас", "📅 На сегодня"],
         ["➡️ На завтра", "🗓 Эта неделя"],
         ["⏭ След. неделя", "🔔 Звонки"],
-        ["⚙️ Настройки"],
+        ["👨‍🏫 Преподаватель", "⚙️ Настройки"],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -120,6 +120,30 @@ def get_subgroup_select_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("1️⃣ 1-я подгруппа", callback_data="set_subgroup_1")],
         [InlineKeyboardButton("2️⃣ 2-я подгруппа", callback_data="set_subgroup_2")],
         [InlineKeyboardButton("⬅️ Назад в настройки", callback_data="settings_back")],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+def get_teachers_inline_keyboard(teachers: list[dict]) -> InlineKeyboardMarkup:
+    """Инлайн-кнопки со списком найденных преподавателей."""
+    keyboard = [
+        [InlineKeyboardButton(t["name"], callback_data=f"teacher_select_{t['id']}")]
+        for t in teachers
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+def get_teacher_schedule_keyboard(teacher_id: int) -> InlineKeyboardMarkup:
+    """Кнопки навигации по расписанию преподавателя."""
+    keyboard = [
+        [
+            InlineKeyboardButton("🟢 Где сейчас?", callback_data=f"teacher_status_{teacher_id}"),
+            InlineKeyboardButton("📅 На сегодня", callback_data=f"teacher_today_{teacher_id}"),
+        ],
+        [
+            InlineKeyboardButton("➡️ На завтра", callback_data=f"teacher_tomorrow_{teacher_id}"),
+            InlineKeyboardButton("🗓 Вся неделя", callback_data=f"teacher_week_{teacher_id}"),
+        ],
     ]
     return InlineKeyboardMarkup(keyboard)
 

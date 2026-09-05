@@ -29,6 +29,7 @@ from src.handlers.schedule import (
     cmd_week,
 )
 from src.handlers.settings import cmd_settings, settings_callback_handler
+from src.handlers.teachers import cmd_teacher, teacher_callback_handler
 from src.handlers.calendar import export_calendar_handler
 from src.handlers.error import error_handler
 
@@ -101,6 +102,7 @@ def create_application() -> Application:
     application.add_handler(CommandHandler("today", cmd_today))
     application.add_handler(CommandHandler("tomorrow", cmd_tomorrow))
     application.add_handler(CommandHandler("week", cmd_week))
+    application.add_handler(CommandHandler(["teacher", "teachers", "prep"], cmd_teacher))
 
     # Команды администратора
     application.add_handler(CommandHandler("stats", cmd_stats))
@@ -117,6 +119,12 @@ def create_application() -> Application:
         MessageHandler(
             filters.Regex("^(🔔 Звонки|Звонки)$"),
             cmd_bells,
+        )
+    )
+    application.add_handler(
+        MessageHandler(
+            filters.Regex("^(👨‍🏫 Преподаватель|Преподаватель)$"),
+            cmd_teacher,
         )
     )
     application.add_handler(
@@ -143,6 +151,12 @@ def create_application() -> Application:
         CallbackQueryHandler(
             export_calendar_handler,
             pattern="^export_ics$",
+        )
+    )
+    application.add_handler(
+        CallbackQueryHandler(
+            teacher_callback_handler,
+            pattern="^teacher_",
         )
     )
 

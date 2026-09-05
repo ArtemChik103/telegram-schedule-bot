@@ -175,12 +175,19 @@ def format_day_schedule(
         lesson_sub = lesson.get("subgroup", 0)
 
         sub_tag = f" <i>[подгруппа {lesson_sub}]</i>" if lesson_sub > 0 else ""
+        stream_with = lesson.get("stream_with")
+        stream_tag = (
+            f"\n👥 <b>Поток с группой:</b> <code>{html.escape(', '.join(stream_with))}</code>"
+            if stream_with
+            else ""
+        )
 
         parts.append(
             f"🔔 <b>{num}-я пара</b> (<code>{time_str}</code>){sub_tag}\n"
             f"📚 <b>{subject}</b>\n"
             f"🚪 Ауд. <b>{classroom}</b>\n"
-            f"🧑‍🏫 {teacher}\n"
+            f"🧑‍🏫 {teacher}"
+            f"{stream_tag}\n"
         )
 
     return header + "\n".join(parts)
@@ -371,6 +378,12 @@ def get_current_status(
             subj = html.escape(lesson.get("discipline_str") or "")
             room = html.escape(lesson.get("classroom_str") or "—")
             teacher = html.escape(lesson.get("person_str") or "—")
+            stream_with = lesson.get("stream_with")
+            stream_str = (
+                f"\n👥 <b>Поток с группой:</b> <code>{html.escape(', '.join(stream_with))}</code>"
+                if stream_with
+                else ""
+            )
 
             text = (
                 f"🔴 <b>Сейчас идет {num}-я пара</b> (<code>{bells_str.get(num)}</code>)\n\n"
@@ -379,6 +392,7 @@ def get_current_status(
                 f"📚 <b>{subj}</b>\n"
                 f"🚪 Ауд. <b>{room}</b>\n"
                 f"🧑‍🏫 {teacher}"
+                f"{stream_str}"
             )
 
             # Добавляем анонс следующей пары
@@ -388,7 +402,9 @@ def get_current_status(
                 next_l = lesson_map[next_num]
                 next_subj = html.escape(next_l.get("discipline_str") or "")
                 next_room = html.escape(next_l.get("classroom_str") or "—")
-                text += f"\n\n🔜 <i>Следующая ({next_num}-я): {next_subj} (ауд. {next_room})</i>"
+                next_stream = next_l.get("stream_with")
+                stream_suffix = f" [поток с {html.escape(', '.join(next_stream))}]" if next_stream else ""
+                text += f"\n\n🔜 <i>Следующая ({next_num}-я): {next_subj} (ауд. {next_room}){stream_suffix}</i>"
 
             return text
 
@@ -411,6 +427,12 @@ def get_current_status(
         next_subj = html.escape(next_lesson.get("discipline_str") or "")
         next_room = html.escape(next_lesson.get("classroom_str") or "—")
         next_teacher = html.escape(next_lesson.get("person_str") or "—")
+        next_stream = next_lesson.get("stream_with")
+        next_stream_tag = (
+            f"\n👥 <b>Поток с группой:</b> <code>{html.escape(', '.join(next_stream))}</code>"
+            if next_stream
+            else ""
+        )
 
         # Если между парами больше 30 минут — это «окно»
         is_break = mins_left <= 30
@@ -428,6 +450,7 @@ def get_current_status(
             f"📚 <b>{next_subj}</b>\n"
             f"🚪 Ауд. <b>{next_room}</b>\n"
             f"🧑‍🏫 {next_teacher}"
+            f"{next_stream_tag}"
         )
 
     return "🔎 <b>Не удалось точно определить статус.</b>"
@@ -556,4 +579,231 @@ def compute_schedule_diff(
                 diffs.append(f"✏️ {prefix} {'; '.join(changes)}")
 
     return diffs
+
+
+# --- Функции расписания преподавателей ---
+
+
+def search_teachers(query: str, teachers: list[dict], limit: int = 8) -> list[dict]:
+    """
+    Выполняет поиск преподавателей по подстроке в ФИО.
+    Возвращает список подходящих преподавателей [{'id': ..., 'name': ...}].
+    """
+    clean_query = query.lower().strip()
+    if not clean_query:
+        return []
+
+    matched = []
+    for t in teachers:
+        name = t.get("name", "")
+        if clean_query in name.lower():
+            matched.append(t)
+            if len(matched) >= limit:
+                break
+    return matched
+
+
+def format_teacher_day_schedule(
+    schedule_data: dict | None,
+    target_date: date,
+) -> str:
+    """Форматирует расписание преподавателя на указанный день."""
+    if not schedule_data:
+        return "⚠️ Не удалось получить расписание преподавателя."
+
+    raw_teacher = schedule_data.get("teacher")
+    if isinstance(raw_teacher, str):
+        teacher_name = html.escape(raw_teacher)
+    elif isinstance(raw_teacher, dict):
+        teacher_name = html.escape(raw_teacher.get("name", "Преподаватель"))
+    else:
+        teacher_name = "Преподаватель"
+
+    weekday = target_date.isoweekday()
+    if weekday == 7:
+        return f"👨‍🏫 <b>{teacher_name}</b>\n📅 <b>Воскресенье</b> — выходной день, пар нет."
+
+    week_type = get_week_type(schedule_data, target_date)
+    week_str = "нечетная" if week_type == 1 else "четная"
+    day_name = WEEKDAY_NAMES[weekday - 1]
+    date_str = target_date.strftime("%d.%m")
+    header = f"👨‍🏫 <b>{teacher_name}</b>\n📅 <b>{day_name}, {date_str}</b> ({week_str} неделя):\n\n"
+
+    template_lines = schedule_data.get("timetable_tamplate_lines", [])
+    day_lines = [
+        line
+        for line in template_lines
+        if line.get("weekday") == weekday
+        and line.get("discipline_str")
+        and (line.get("parity") == 0 or line.get("parity") == week_type)
+    ]
+
+    if not day_lines:
+        return header + "🎉 В этот день у преподавателя <b>нет пар</b>!"
+
+    bells_str = get_bell_schedule_str(schedule_data)
+
+    # Группируем пары по номеру урока для объединения потоковых групп
+    lessons_by_num: dict[int, list[dict]] = {}
+    for line in day_lines:
+        num = line.get("lesson", 1)
+        if num not in lessons_by_num:
+            lessons_by_num[num] = []
+        lessons_by_num[num].append(line)
+
+    text_parts = [header]
+    for num in sorted(lessons_by_num.keys()):
+        lines_for_num = lessons_by_num[num]
+        first_line = lines_for_num[0]
+        time_interval = bells_str.get(num, "")
+        time_text = f" ({time_interval})" if time_interval else ""
+        subj = html.escape(first_line.get("discipline_str", "—"))
+        room = html.escape(first_line.get("classroom_str", "—"))
+
+        all_groups = sorted(list({l.get("group_str") for l in lines_for_num if l.get("group_str")}))
+        if len(all_groups) > 1:
+            groups_label = f"👥 <b>Группы (поток):</b> <code>{html.escape(', '.join(all_groups))}</code>"
+        elif all_groups:
+            groups_label = f"👥 Группа: <b>{html.escape(all_groups[0])}</b>"
+        else:
+            groups_label = "👥 Группа: —"
+
+        lesson_block = (
+            f"<b>{num}-я пара</b>{time_text}:\n"
+            f"  📚 <b>{subj}</b>\n"
+            f"  {groups_label}\n"
+            f"  🚪 Ауд.: <b>{room}</b>\n"
+        )
+        text_parts.append(lesson_block)
+
+    return "\n".join(text_parts).strip()
+
+
+def get_teacher_current_status(schedule_data: dict | None) -> str:
+    """Определяет, где преподаватель находится прямо сейчас."""
+    if not schedule_data:
+        return "⚠️ Не удалось получить данные расписания."
+
+    raw_teacher = schedule_data.get("teacher")
+    if isinstance(raw_teacher, str):
+        teacher_name = html.escape(raw_teacher)
+    elif isinstance(raw_teacher, dict):
+        teacher_name = html.escape(raw_teacher.get("name", "Преподаватель"))
+    else:
+        teacher_name = "Преподаватель"
+
+    now_dt = datetime.now(TIMEZONE)
+    today = now_dt.date()
+    weekday = today.isoweekday()
+
+    if weekday == 7:
+        return f"👨‍🏫 <b>{teacher_name}</b>: сегодня воскресенье, выходной день."
+
+    week_type = get_week_type(schedule_data, today)
+    template_lines = schedule_data.get("timetable_tamplate_lines", [])
+    today_lines = [
+        line
+        for line in template_lines
+        if line.get("weekday") == weekday
+        and line.get("discipline_str")
+        and (line.get("parity") == 0 or line.get("parity") == week_type)
+    ]
+
+    if not today_lines:
+        return f"👨‍🏫 <b>{teacher_name}</b>: сегодня по расписанию пар нет."
+
+    # Группируем по уроку
+    lessons_by_num: dict[int, list[dict]] = {}
+    for line in today_lines:
+        num = line.get("lesson", 0)
+        if num not in lessons_by_num:
+            lessons_by_num[num] = []
+        lessons_by_num[num].append(line)
+
+    sorted_lesson_nums = sorted(lessons_by_num.keys())
+    bells = get_bell_schedule(schedule_data)
+    now_time = now_dt.time()
+
+    # Проверяем, идет ли пара сейчас
+    for num in sorted_lesson_nums:
+        if num in bells:
+            start_t, end_t = bells[num]
+            if start_t <= now_time <= end_t:
+                lines_for_num = lessons_by_num[num]
+                first_line = lines_for_num[0]
+                t_now_dt = datetime.combine(today, now_time)
+                t_end_dt = datetime.combine(today, end_t)
+                mins_left = int((t_end_dt - t_now_dt).total_seconds() // 60)
+                subj = html.escape(first_line.get("discipline_str", "—"))
+                room = html.escape(first_line.get("classroom_str", "—"))
+
+                all_groups = sorted(list({l.get("group_str") for l in lines_for_num if l.get("group_str")}))
+                if len(all_groups) > 1:
+                    groups_label = f"👥 <b>Группы (поток):</b> <code>{html.escape(', '.join(all_groups))}</code>"
+                elif all_groups:
+                    groups_label = f"👥 Группа: <b>{html.escape(all_groups[0])}</b>"
+                else:
+                    groups_label = "👥 Группа: —"
+
+                return (
+                    f"🟢 <b>{teacher_name}</b> сейчас на паре!\n\n"
+                    f"<b>{num}-я пара</b> ({start_t.strftime('%H:%M')}–{end_t.strftime('%H:%M')}):\n"
+                    f"📚 <b>{subj}</b>\n"
+                    f"{groups_label}\n"
+                    f"🚪 Аудитория: <b>{room}</b>\n"
+                    f"⏳ До звонка: <b>{mins_left} мин</b>"
+                )
+
+    # Проверяем, до начала первой пары
+    first_num = sorted_lesson_nums[0]
+    first_start = bells.get(first_num, (time(23, 59), time(23, 59)))[0]
+
+    if now_time < first_start:
+        lines_for_num = lessons_by_num[first_num]
+        first_line = lines_for_num[0]
+        subj = html.escape(first_line.get("discipline_str", "—"))
+        room = html.escape(first_line.get("classroom_str", "—"))
+        all_groups = sorted(list({l.get("group_str") for l in lines_for_num if l.get("group_str")}))
+        grp_str = f"группа {', '.join(all_groups)}" if all_groups else ""
+        return (
+            f"🟡 <b>{teacher_name}</b>: пары сегодня еще не начались.\n\n"
+            f"Первая пара в <b>{first_start.strftime('%H:%M')}</b> (ауд. <b>{room}</b>{', ' + grp_str if grp_str else ''}):\n"
+            f"«{subj}»"
+        )
+
+    # Проверяем перемены между парами
+    for i in range(len(sorted_lesson_nums) - 1):
+        cur_num = sorted_lesson_nums[i]
+        next_num = sorted_lesson_nums[i + 1]
+        if cur_num in bells and next_num in bells:
+            cur_end = bells[cur_num][1]
+            next_start = bells[next_num][0]
+            if cur_end < now_time < next_start:
+                next_lines = lessons_by_num[next_num]
+                first_next = next_lines[0]
+                next_room = html.escape(first_next.get("classroom_str", "—"))
+                next_subj = html.escape(first_next.get("discipline_str", "—"))
+                all_groups = sorted(list({l.get("group_str") for l in next_lines if l.get("group_str")}))
+                if len(all_groups) > 1:
+                    groups_label = f"👥 <b>Группы (поток):</b> <code>{html.escape(', '.join(all_groups))}</code>"
+                elif all_groups:
+                    groups_label = f"👥 Группа: <b>{html.escape(all_groups[0])}</b>"
+                else:
+                    groups_label = "👥 Группа: —"
+
+                return (
+                    f"🟡 <b>{teacher_name}</b> — сейчас перемена (до {next_start.strftime('%H:%M')}).\n\n"
+                    f"Следующая ({next_num}-я) пара:\n"
+                    f"📚 {next_subj}\n"
+                    f"{groups_label}\n"
+                    f"🚪 Аудитория: <b>{next_room}</b>"
+                )
+
+    # Все пары на сегодня закончились
+    last_num = sorted_lesson_nums[-1]
+    last_end = bells.get(last_num, (time(0, 0), time(0, 0)))[1]
+    if now_time > last_end:
+        return f"⚪ <b>{teacher_name}</b>: все пары на сегодня закончились."
+
+    return f"⚪ <b>{teacher_name}</b>: сейчас перерыв в расписании."
 
