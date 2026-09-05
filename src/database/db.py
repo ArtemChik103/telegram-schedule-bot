@@ -12,7 +12,16 @@ class Database:
     def __init__(self, db_path: str = DB_PATH):
         self.db_path = db_path
         self._conn: aiosqlite.Connection | None = None
-        self._lock = asyncio.Lock()
+        self._lock: asyncio.Lock | None = None
+        self._lock_loop = None
+
+    @property
+    def lock(self) -> asyncio.Lock:
+        loop = asyncio.get_running_loop()
+        if self._lock is None or self._lock_loop != loop:
+            self._lock = asyncio.Lock()
+            self._lock_loop = loop
+        return self._lock
 
     async def _get_conn(self) -> aiosqlite.Connection:
         """Возвращает или создает долгоживущее соединение с SQLite для текущего event loop."""
@@ -31,7 +40,7 @@ class Database:
 
     async def close(self) -> None:
         """Закрывает соединение с БД."""
-        async with self._lock:
+        async with self.lock:
             if self._conn is not None:
                 try:
                     await self._conn.close()
@@ -41,7 +50,7 @@ class Database:
 
     async def init(self) -> None:
         """Инициализация таблиц базы данных, миграции и создание индексов."""
-        async with self._lock:
+        async with self.lock:
             conn = await self._get_conn()
 
             # Миграция schedule_cache (если был id вместо group_id)
@@ -133,7 +142,7 @@ class Database:
 
     async def save_schedule(self, group_id: int, data: dict) -> None:
         """Сохраняет JSON расписания группы в SQLite."""
-        async with self._lock:
+        async with self.lock:
             try:
                 conn = await self._get_conn()
                 now_str = datetime.now(TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
@@ -159,7 +168,7 @@ class Database:
 
     async def load_schedule_with_meta(self, group_id: int) -> tuple[dict | None, str | None]:
         """Загружает JSON расписания и дату сохранения updated_at."""
-        async with self._lock:
+        async with self.lock:
             try:
                 conn = await self._get_conn()
                 async with conn.execute(
@@ -189,7 +198,7 @@ class Database:
         self, user_id: int, username: str | None = None, first_name: str | None = None
     ) -> dict:
         """Регистрирует нового пользователя или обновляет время последней активности."""
-        async with self._lock:
+        async with self.lock:
             conn = await self._get_conn()
             now_str = datetime.now(TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -233,7 +242,7 @@ class Database:
 
     async def get_user(self, user_id: int) -> dict | None:
         """Возвращает данные пользователя."""
-        async with self._lock:
+        async with self.lock:
             conn = await self._get_conn()
             async with conn.execute(
                 "SELECT * FROM users WHERE user_id = ?", (user_id,)
@@ -243,7 +252,7 @@ class Database:
 
     async def update_user_subgroup(self, user_id: int, subgroup: int) -> None:
         """Устанавливает выбранную подгруппу (0 - вся группа, 1 или 2)."""
-        async with self._lock:
+        async with self.lock:
             conn = await self._get_conn()
             await conn.execute(
                 "UPDATE users SET subgroup = ? WHERE user_id = ?",
@@ -259,7 +268,7 @@ class Database:
             "only_lessons": "notify_only_with_lessons",
         }
         column = col_map.get(notif_type, "notify_morning")
-        async with self._lock:
+        async with self.lock:
             conn = await self._get_conn()
             async with conn.execute(
                 f"SELECT {column} FROM users WHERE user_id = ?", (user_id,)
@@ -277,7 +286,7 @@ class Database:
 
     async def mark_user_blocked(self, user_id: int) -> None:
         """Отмечает пользователя как заблокировавшего бота."""
-        async with self._lock:
+        async with self.lock:
             conn = await self._get_conn()
             await conn.execute(
                 """
@@ -293,7 +302,7 @@ class Database:
 
     async def get_users_for_morning_digest(self) -> list[dict]:
         """Возвращает пользователей с включенными утренними уведомлениями."""
-        async with self._lock:
+        async with self.lock:
             conn = await self._get_conn()
             async with conn.execute(
                 "SELECT * FROM users WHERE notify_morning = 1 AND is_blocked = 0"
@@ -303,7 +312,7 @@ class Database:
 
     async def get_users_for_evening_digest(self) -> list[dict]:
         """Возвращает пользователей с включенными вечерними уведомлениями."""
-        async with self._lock:
+        async with self.lock:
             conn = await self._get_conn()
             async with conn.execute(
                 "SELECT * FROM users WHERE notify_evening = 1 AND is_blocked = 0"
@@ -313,7 +322,7 @@ class Database:
 
     async def get_all_active_users(self) -> list[dict]:
         """Возвращает всех активных пользователей для оповещений об изменениях."""
-        async with self._lock:
+        async with self.lock:
             conn = await self._get_conn()
             async with conn.execute(
                 "SELECT * FROM users WHERE is_blocked = 0"
@@ -323,7 +332,7 @@ class Database:
 
     async def get_bot_stats(self) -> dict:
         """Возвращает агрегированную статистику использования бота."""
-        async with self._lock:
+        async with self.lock:
             conn = await self._get_conn()
             today_str = datetime.now(TIMEZONE).strftime("%Y-%m-%d")
 
@@ -350,7 +359,7 @@ class Database:
 
     async def get_schedule_snapshot(self, group_id: int) -> tuple[str, dict] | None:
         """Возвращает хеш и сохраненный JSON слепка расписания."""
-        async with self._lock:
+        async with self.lock:
             conn = await self._get_conn()
             async with conn.execute(
                 "SELECT snapshot_hash, json_data FROM schedule_snapshots WHERE group_id = ?",
@@ -363,7 +372,7 @@ class Database:
 
     async def save_schedule_snapshot(self, group_id: int, snapshot_hash: str, data: dict) -> None:
         """Сохраняет актуальный слепок расписания для отслеживания изменений."""
-        async with self._lock:
+        async with self.lock:
             conn = await self._get_conn()
             now_str = datetime.now(TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
             json_str = json.dumps(data, ensure_ascii=False)

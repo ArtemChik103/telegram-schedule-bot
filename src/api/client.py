@@ -13,9 +13,28 @@ class AmSUApiClient:
         self.base_url = base_url
         self.ttl = ttl
         # In-memory кэш: {group_id: (data, timestamp)}
-        self._memory_cache: dict[int, tuple[dict, float]] = {}
+        self._memory_cache: dict[int | str, tuple[dict | list, float]] = {}
         self._client: httpx.AsyncClient | None = None
-        self._lock = asyncio.Lock()
+        self._group_lock: asyncio.Lock | None = None
+        self._teachers_list_lock: asyncio.Lock | None = None
+        self._teacher_locks: dict[int, asyncio.Lock] = {}
+
+    @property
+    def group_lock(self) -> asyncio.Lock:
+        if self._group_lock is None:
+            self._group_lock = asyncio.Lock()
+        return self._group_lock
+
+    @property
+    def teachers_list_lock(self) -> asyncio.Lock:
+        if self._teachers_list_lock is None:
+            self._teachers_list_lock = asyncio.Lock()
+        return self._teachers_list_lock
+
+    def get_teacher_lock(self, teacher_id: int) -> asyncio.Lock:
+        if teacher_id not in self._teacher_locks:
+            self._teacher_locks[teacher_id] = asyncio.Lock()
+        return self._teacher_locks[teacher_id]
 
     def _get_client(self) -> httpx.AsyncClient:
         """Возвращает или создает долгоживущий асинхронный HTTP-клиент."""
@@ -50,8 +69,11 @@ class AmSUApiClient:
             if now - cached_at < self.ttl:
                 return cached_data, False
 
+        data = None
+        is_fallback = False
+
         # 2. Захватываем блокировку для предотвращения thundering herd
-        async with self._lock:
+        async with self.group_lock:
             now = time.time()
             if not force_refresh and group_id in self._memory_cache:
                 cached_data, cached_at = self._memory_cache[group_id]
@@ -64,30 +86,26 @@ class AmSUApiClient:
                 response = await client.get(url)
                 response.raise_for_status()
                 data = response.json()
-
-                # Обогащаем расписание группы информацией о потоках с другими группами
-                try:
-                    await self.enrich_group_schedule_streams(data)
-                except Exception as stream_err:
-                    logger.warning(f"Ошибка при определении потоков: {stream_err}")
-
-                # Обновляем in-memory кэш и базу SQLite
-                self._memory_cache[group_id] = (data, now)
-                await db.save_schedule(group_id, data)
-                return data, False
-
             except Exception as e:
                 logger.warning(
                     f"⚠️ API АмГУ недоступен ({url}): {e}. Загружаем из SQLite..."
                 )
-
-                # 3. Fallback: Загрузка из SQLite
                 db_data = await db.load_schedule(group_id)
                 if db_data:
                     self._memory_cache[group_id] = (db_data, now)
                     return db_data, True
-
                 return None, False
+
+        # 3. Обогащаем расписание группы информацией о потоках вне блокировки
+        try:
+            await self.enrich_group_schedule_streams(data)
+        except Exception as stream_err:
+            logger.warning(f"Ошибка при определении потоков: {stream_err}")
+
+        # Обновляем in-memory кэш и базу SQLite
+        self._memory_cache[group_id] = (data, now)
+        await db.save_schedule(group_id, data)
+        return data, False
 
     async def enrich_group_schedule_streams(self, data: dict) -> dict:
         """
@@ -167,7 +185,7 @@ class AmSUApiClient:
             if now - cached_at < 3600 * 12:
                 return data
 
-        async with self._lock:
+        async with self.teachers_list_lock:
             if not force_refresh and cache_key in self._memory_cache:
                 data, cached_at = self._memory_cache[cache_key]
                 if now - cached_at < 3600 * 12:
@@ -202,7 +220,8 @@ class AmSUApiClient:
             if now - cached_at < self.ttl:
                 return data
 
-        async with self._lock:
+        t_lock = self.get_teacher_lock(teacher_id)
+        async with t_lock:
             if not force_refresh and cache_key in self._memory_cache:
                 data, cached_at = self._memory_cache[cache_key]
                 if now - cached_at < self.ttl:
