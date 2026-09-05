@@ -75,3 +75,39 @@ def test_get_teacher_current_status():
     }
     status = get_teacher_current_status(sample_data)
     assert "Иванов И.И." in status
+
+
+def test_get_group_teachers():
+    from src.services.schedule_service import get_group_teachers
+
+    sample_group_data = {
+        "timetable_tamplate_lines": [
+            {"person_id": 28293, "person_str": "Шульгина Н.Г."},
+            {"person_id": 68508, "person_str": "Казакова Т.А."},
+            {"person_id": 28293, "person_str": "Шульгина Н.Г."},  # дубликат
+            {"person_id": None, "person_str": ""},
+        ]
+    }
+    teachers = get_group_teachers(sample_group_data)
+    assert len(teachers) == 2
+    names = [t["name"] for t in teachers]
+    assert "Шульгина Н.Г." in names
+    assert "Казакова Т.А." in names
+
+
+def test_get_teachers_inline_keyboard():
+    from src.keyboards.markups import get_teachers_inline_keyboard
+
+    teachers = [
+        {"id": 1, "name": "Казакова Татьяна Анатольевна"},
+        {"id": 2, "name": "Шульгина Наталья Геннадьевна"},
+        {"id": 3, "name": "Михелкин Владимир Алексеевич"},
+    ]
+    markup = get_teachers_inline_keyboard(teachers)
+    # Должно быть 2 строки: первая с 2 кнопками, вторая с 1
+    assert len(markup.inline_keyboard) == 2
+    assert len(markup.inline_keyboard[0]) == 2
+    assert len(markup.inline_keyboard[1]) == 1
+    assert markup.inline_keyboard[0][0].callback_data == "teacher_select_1"
+    assert markup.inline_keyboard[0][0].text == "Казакова Т.А."
+

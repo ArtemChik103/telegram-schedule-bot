@@ -12,7 +12,7 @@ def get_main_reply_keyboard() -> ReplyKeyboardMarkup:
         ["🔴 Сейчас", "📅 На сегодня"],
         ["➡️ На завтра", "🗓 Эта неделя"],
         ["⏭ След. неделя", "🔔 Звонки"],
-        ["👨‍🏫 Преподаватель", "⚙️ Настройки"],
+        ["👨‍🏫 Преподаватели", "⚙️ Настройки"],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -125,24 +125,79 @@ def get_subgroup_select_keyboard() -> InlineKeyboardMarkup:
 
 
 def get_teachers_inline_keyboard(teachers: list[dict]) -> InlineKeyboardMarkup:
-    """Инлайн-кнопки со списком найденных преподавателей."""
+    """Инлайн-кнопки со списком преподавателей группы (по 2 в ряд)."""
+    keyboard = []
+    row = []
+    for t in teachers:
+        name = t.get("name", "Преподаватель")
+        parts = name.split()
+        if len(parts) >= 3:
+            short_name = f"{parts[0]} {parts[1][0]}.{parts[2][0]}."
+        elif len(parts) == 2:
+            short_name = f"{parts[0]} {parts[1][0]}."
+        else:
+            short_name = name
+
+        row.append(
+            InlineKeyboardButton(short_name, callback_data=f"teacher_select_{t['id']}")
+        )
+        if len(row) == 2:
+            keyboard.append(row)
+            row = []
+
+    if row:
+        keyboard.append(row)
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+def get_teacher_schedule_keyboard(
+    teacher_id: int, active_tab: str = "today"
+) -> InlineKeyboardMarkup:
+    """Кнопки навигации по расписанию выбранного преподавателя."""
+    status_btn = "• Где сейчас? •" if active_tab == "status" else "🟢 Где сейчас?"
+    today_btn = "• Сегодня •" if active_tab == "today" else "📅 Сегодня"
+    tomorrow_btn = "• Завтра •" if active_tab == "tomorrow" else "➡️ Завтра"
+    week_btn = "• Вся неделя •" if active_tab == "week" else "🗓 Вся неделя"
+
     keyboard = [
-        [InlineKeyboardButton(t["name"], callback_data=f"teacher_select_{t['id']}")]
-        for t in teachers
+        [
+            InlineKeyboardButton(status_btn, callback_data=f"teacher_status_{teacher_id}"),
+            InlineKeyboardButton(today_btn, callback_data=f"teacher_today_{teacher_id}"),
+        ],
+        [
+            InlineKeyboardButton(tomorrow_btn, callback_data=f"teacher_tomorrow_{teacher_id}"),
+            InlineKeyboardButton(week_btn, callback_data=f"teacher_week_{teacher_id}"),
+        ],
+        [
+            InlineKeyboardButton("⬅️ Все преподаватели", callback_data="teacher_list"),
+        ],
     ]
     return InlineKeyboardMarkup(keyboard)
 
 
-def get_teacher_schedule_keyboard(teacher_id: int) -> InlineKeyboardMarkup:
-    """Кнопки навигации по расписанию преподавателя."""
+def get_teacher_week_keyboard(
+    teacher_id: int, active_day: int | None = None
+) -> InlineKeyboardMarkup:
+    """Интерактивные кнопки по дням недели для расписания преподавателя."""
+    day_row = []
+    for day_num in range(1, 7):
+        short = WEEKDAY_SHORT_NAMES[day_num - 1]
+        label = f"• {short} •" if active_day == day_num else short
+        day_row.append(
+            InlineKeyboardButton(
+                label, callback_data=f"teacher_day_{teacher_id}_{day_num}"
+            )
+        )
+
     keyboard = [
+        day_row,
         [
             InlineKeyboardButton("🟢 Где сейчас?", callback_data=f"teacher_status_{teacher_id}"),
-            InlineKeyboardButton("📅 На сегодня", callback_data=f"teacher_today_{teacher_id}"),
+            InlineKeyboardButton("📅 Сегодня", callback_data=f"teacher_today_{teacher_id}"),
         ],
         [
-            InlineKeyboardButton("➡️ На завтра", callback_data=f"teacher_tomorrow_{teacher_id}"),
-            InlineKeyboardButton("🗓 Вся неделя", callback_data=f"teacher_week_{teacher_id}"),
+            InlineKeyboardButton("⬅️ Все преподаватели", callback_data="teacher_list"),
         ],
     ]
     return InlineKeyboardMarkup(keyboard)

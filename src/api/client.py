@@ -1,8 +1,9 @@
 import time
 import logging
 import asyncio
+from datetime import datetime
 import httpx
-from src.config import API_BASE_URL, CACHE_TTL_SECONDS, GROUP_ID
+from src.config import API_BASE_URL, CACHE_TTL_SECONDS, GROUP_ID, TIMEZONE
 from src.database.db import db
 
 logger = logging.getLogger(__name__)
@@ -233,6 +234,8 @@ class AmSUApiClient:
                 response = await client.get(url)
                 response.raise_for_status()
                 data = response.json()
+                if isinstance(data, dict):
+                    data["_cached_at_date"] = datetime.now(TIMEZONE).strftime("%Y-%m-%d")
                 self._memory_cache[cache_key] = (data, now)
                 return data
             except Exception as e:

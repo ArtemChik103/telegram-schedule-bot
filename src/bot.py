@@ -123,7 +123,7 @@ def create_application() -> Application:
     )
     application.add_handler(
         MessageHandler(
-            filters.Regex("^(👨‍🏫 Преподаватель|Преподаватель)$"),
+            filters.Regex("^(👨‍🏫 Преподаватели|👨‍🏫 Преподаватель|Преподаватели|Преподаватель)$"),
             cmd_teacher,
         )
     )
