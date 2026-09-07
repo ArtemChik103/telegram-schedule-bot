@@ -53,9 +53,7 @@ async def cmd_start(update: Update, context: CallbackContext) -> None:
         f"<i>Выберите нужный раздел в меню ниже 👇</i>"
     )
 
-    # В группах не спамим ReplyKeyboardMarkup
-    is_group = update.effective_chat and update.effective_chat.type in ("group", "supergroup")
-    markup = None if is_group else get_main_reply_keyboard()
+    markup = get_main_reply_keyboard()
 
     await update.message.reply_text(
         welcome_text,
