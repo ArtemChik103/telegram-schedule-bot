@@ -27,6 +27,17 @@ async def cmd_start(update: Update, context: CallbackContext) -> None:
         first_name=user.first_name,
     )
 
+    is_group = (
+        update.effective_chat
+        and update.effective_chat.type in ("group", "supergroup")
+    )
+    if is_group:
+        await db.register_or_update_user(
+            user_id=update.effective_chat.id,
+            username=update.effective_chat.username,
+            first_name=update.effective_chat.title,
+        )
+
     welcome_text = (
         f"👋 <b>Привет, {user.first_name}!</b>\n\n"
         f"Я бот расписания группы <b>{GROUP_NAME}</b> (АмГУ).\n\n"

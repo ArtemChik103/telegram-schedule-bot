@@ -61,8 +61,13 @@ async def send_morning_digest(context: CallbackContext) -> None:
             if notify_only_lessons and not lessons:
                 continue
 
-            text = "🌅 <b>Доброе утро! Расписание на сегодня:</b>\n\n"
-            text += format_day_schedule(schedule_data, today, subgroup=subgroup)
+            is_group = user_id < 0
+            greeting = (
+                "🌅 <b>Доброе утро, группа! Расписание на сегодня:</b>\n\n"
+                if is_group
+                else "🌅 <b>Доброе утро! Расписание на сегодня:</b>\n\n"
+            )
+            text = greeting + format_day_schedule(schedule_data, today, subgroup=subgroup)
 
             await send_safe_message(context.bot, user_id, text)
 
@@ -94,8 +99,13 @@ async def send_evening_digest(context: CallbackContext) -> None:
             if notify_only_lessons and not lessons:
                 continue
 
-            text = "🌙 <b>Расписание на завтра:</b>\n\n"
-            text += format_day_schedule(schedule_data, tomorrow, subgroup=subgroup)
+            is_group = user_id < 0
+            greeting = (
+                "🌙 <b>Расписание группы на завтра:</b>\n\n"
+                if is_group
+                else "🌙 <b>Расписание на завтра:</b>\n\n"
+            )
+            text = greeting + format_day_schedule(schedule_data, tomorrow, subgroup=subgroup)
 
             await send_safe_message(context.bot, user_id, text)
 

@@ -78,10 +78,13 @@ def get_settings_inline_keyboard(user: dict | None) -> InlineKeyboardMarkup:
     only_lessons = user.get("notify_only_with_lessons", 1) if user else 1
     only_lessons_icon = "😴 ВКЛ (тишина)" if only_lessons else "🔔 Всегда"
 
+    is_group = user.get("user_id", 0) < 0 if user else False
+    subgroup_title = f"👥 Подгруппа: {subgroup_str}" if is_group else f"👥 Моя подгруппа: {subgroup_str}"
+
     keyboard = [
         [
             InlineKeyboardButton(
-                f"👥 Моя подгруппа: {subgroup_str}",
+                subgroup_title,
                 callback_data="settings_subgroup",
             )
         ],

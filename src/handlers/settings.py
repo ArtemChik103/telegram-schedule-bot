@@ -13,23 +13,41 @@ logger = logging.getLogger(__name__)
 
 
 async def cmd_settings(update: Update, context: CallbackContext) -> None:
-    """Отображает меню настроек пользователя."""
-    if not update.effective_user:
+    """Отображает меню настроек пользователя или группы."""
+    if not update.effective_chat:
         return
 
-    user = await db.get_user(update.effective_user.id)
+    is_group = update.effective_chat.type in ("group", "supergroup")
+    target_id = (
+        update.effective_chat.id
+        if is_group
+        else (update.effective_user.id if update.effective_user else update.effective_chat.id)
+    )
+    target_name = (
+        update.effective_chat.title
+        if is_group
+        else (update.effective_user.first_name if update.effective_user else "Пользователь")
+    )
+    target_username = (
+        update.effective_chat.username
+        if is_group
+        else (update.effective_user.username if update.effective_user else None)
+    )
+
+    user = await db.get_user(target_id)
     if not user:
         user = await db.register_or_update_user(
-            user_id=update.effective_user.id,
-            username=update.effective_user.username,
-            first_name=update.effective_user.first_name,
+            user_id=target_id,
+            username=target_username,
+            first_name=target_name,
         )
 
+    title_label = f"беседы «{target_name}»" if is_group else "профиля"
     text = (
-        "⚙️ <b>Настройки профиля:</b>\n\n"
-        "• <b>Подгруппа</b> — фильтрует расписание под вашу подгруппу (1-я или 2-я), скрывая лишние лабораторные/практики.\n"
-        "• <b>Утренний дайджест (07:30)</b> — бот автоматически присылает расписание на сегодня утром.\n"
-        "• <b>Вечерний дайджест (20:00)</b> — бот присылает расписание на завтра вечером.\n"
+        f"⚙️ <b>Настройки {title_label}:</b>\n\n"
+        "• <b>Подгруппа</b> — фильтрует расписание (для беседы обычно «Вся группа»).\n"
+        "• <b>Утренний дайджест (07:30)</b> — бот автоматически присылает расписание на сегодня прямо сюда.\n"
+        "• <b>Вечерний дайджест (20:00)</b> — бот присылает расписание на завтра прямо сюда.\n"
         "• <b>Без пар не будить</b> — отключает утреннюю рассылку в дни, когда нет пар (выходные, праздники).\n"
         "• <b>Экспорт в календарь</b> — формирует файл <code>.ics</code> для Google Calendar / Apple Calendar."
     )
@@ -49,18 +67,24 @@ async def cmd_settings(update: Update, context: CallbackContext) -> None:
 async def settings_callback_handler(update: Update, context: CallbackContext) -> None:
     """Обработчик callback-кнопок меню настроек."""
     query = update.callback_query
-    if not query or not query.data or not update.effective_user:
+    if not query or not query.data or not update.effective_chat:
         return
 
-    user_id = update.effective_user.id
+    is_group = update.effective_chat.type in ("group", "supergroup")
+    target_id = (
+        update.effective_chat.id
+        if is_group
+        else (update.effective_user.id if update.effective_user else update.effective_chat.id)
+    )
+    target_desc = "в беседу" if is_group else ""
     data = query.data
 
     # Переключение утреннего дайджеста
     if data == "toggle_notif_morning":
-        new_state = await db.toggle_notification(user_id, "morning")
-        status_str = "включен (07:30)" if new_state else "выключен"
+        new_state = await db.toggle_notification(target_id, "morning")
+        status_str = f"включен (07:30) {target_desc}".strip() if new_state else f"выключен {target_desc}".strip()
         await query.answer(f"Утренний дайджест {status_str}!")
-        user = await db.get_user(user_id)
+        user = await db.get_user(target_id)
         try:
             await query.edit_message_reply_markup(
                 reply_markup=get_settings_inline_keyboard(user)
@@ -70,10 +94,10 @@ async def settings_callback_handler(update: Update, context: CallbackContext) ->
 
     # Переключение вечернего дайджеста
     elif data == "toggle_notif_evening":
-        new_state = await db.toggle_notification(user_id, "evening")
-        status_str = "включен (20:00)" if new_state else "выключен"
+        new_state = await db.toggle_notification(target_id, "evening")
+        status_str = f"включен (20:00) {target_desc}".strip() if new_state else f"выключен {target_desc}".strip()
         await query.answer(f"Вечерний дайджест {status_str}!")
-        user = await db.get_user(user_id)
+        user = await db.get_user(target_id)
         try:
             await query.edit_message_reply_markup(
                 reply_markup=get_settings_inline_keyboard(user)
@@ -83,10 +107,10 @@ async def settings_callback_handler(update: Update, context: CallbackContext) ->
 
     # Переключение опции «Без пар не будить»
     elif data == "toggle_notif_only_lessons":
-        new_state = await db.toggle_notification(user_id, "only_lessons")
+        new_state = await db.toggle_notification(target_id, "only_lessons")
         status_str = "включен (тишина)" if new_state else "выключен"
         await query.answer(f"Режим без пар: {status_str}!")
-        user = await db.get_user(user_id)
+        user = await db.get_user(target_id)
         try:
             await query.edit_message_reply_markup(
                 reply_markup=get_settings_inline_keyboard(user)
@@ -97,10 +121,11 @@ async def settings_callback_handler(update: Update, context: CallbackContext) ->
     # Открытие меню выбора подгруппы
     elif data == "settings_subgroup":
         await query.answer()
+        sub_desc = "для этой беседы" if is_group else "вашу"
         text = (
-            "👥 <b>Выберите вашу подгруппу:</b>\n\n"
+            f"👥 <b>Выберите {sub_desc} подгруппу:</b>\n\n"
             "• <i>Вся группа</i> — отображаются все пары без фильтрации.\n"
-            "• <i>1-я / 2-я подгруппа</i> — отображаются только общие пары и пары вашей подгруппы."
+            "• <i>1-я / 2-я подгруппа</i> — отображаются только общие пары и пары выбранной подгруппы."
         )
         try:
             await query.edit_message_text(
@@ -114,15 +139,15 @@ async def settings_callback_handler(update: Update, context: CallbackContext) ->
     # Установка выбранной подгруппы (0, 1 или 2)
     elif data.startswith("set_subgroup_"):
         sub_num = int(data.split("_")[-1])
-        await db.update_user_subgroup(user_id, sub_num)
+        await db.update_user_subgroup(target_id, sub_num)
         sub_label = "Вся группа" if sub_num == 0 else f"{sub_num}-я подгруппа"
         await query.answer(f"Выбрана: {sub_label}")
         # Возврат в главное меню настроек
-        user = await db.get_user(user_id)
+        user = await db.get_user(target_id)
         await cmd_settings(update, context)
 
     # Кнопка «Назад» в настройки
     elif data == "settings_back":
         await query.answer()
-        user = await db.get_user(user_id)
+        user = await db.get_user(target_id)
         await cmd_settings(update, context)
