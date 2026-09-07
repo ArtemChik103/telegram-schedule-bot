@@ -3,6 +3,8 @@ services:
     build: .
     container_name: amsu-schedule-bot
     restart: unless-stopped
+    extra_hosts:
+      - "api.telegram.org:149.154.167.220"
     env_file:
       - .env
     environment:
