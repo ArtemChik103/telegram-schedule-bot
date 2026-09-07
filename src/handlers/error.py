@@ -25,6 +25,11 @@ async def error_handler(update: object, context: CallbackContext) -> None:
         )
         return
 
+    err_str = str(err)
+    if "Query is too old" in err_str or "Message is not modified" in err_str:
+        logger.info(f"Ожидаемое исключение Telegram (игнорируется): {err}")
+        return
+
     logger.error("Исключение при обработке update:", exc_info=err)
 
     if not ADMIN_ID:

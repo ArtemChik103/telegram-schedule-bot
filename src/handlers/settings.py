@@ -79,11 +79,20 @@ async def settings_callback_handler(update: Update, context: CallbackContext) ->
     target_desc = "в беседу" if is_group else ""
     data = query.data
 
+    async def _safe_answer(text: str | None = None) -> None:
+        try:
+            if text:
+                await query.answer(text)
+            else:
+                await query.answer()
+        except BadRequest:
+            pass
+
     # Переключение утреннего дайджеста
     if data == "toggle_notif_morning":
         new_state = await db.toggle_notification(target_id, "morning")
         status_str = f"включен (07:30) {target_desc}".strip() if new_state else f"выключен {target_desc}".strip()
-        await query.answer(f"Утренний дайджест {status_str}!")
+        await _safe_answer(f"Утренний дайджест {status_str}!")
         user = await db.get_user(target_id)
         try:
             await query.edit_message_reply_markup(
@@ -96,7 +105,7 @@ async def settings_callback_handler(update: Update, context: CallbackContext) ->
     elif data == "toggle_notif_evening":
         new_state = await db.toggle_notification(target_id, "evening")
         status_str = f"включен (20:00) {target_desc}".strip() if new_state else f"выключен {target_desc}".strip()
-        await query.answer(f"Вечерний дайджест {status_str}!")
+        await _safe_answer(f"Вечерний дайджест {status_str}!")
         user = await db.get_user(target_id)
         try:
             await query.edit_message_reply_markup(
@@ -109,7 +118,7 @@ async def settings_callback_handler(update: Update, context: CallbackContext) ->
     elif data == "toggle_notif_only_lessons":
         new_state = await db.toggle_notification(target_id, "only_lessons")
         status_str = "включен (тишина)" if new_state else "выключен"
-        await query.answer(f"Режим без пар: {status_str}!")
+        await _safe_answer(f"Режим без пар: {status_str}!")
         user = await db.get_user(target_id)
         try:
             await query.edit_message_reply_markup(
@@ -120,7 +129,7 @@ async def settings_callback_handler(update: Update, context: CallbackContext) ->
 
     # Открытие меню выбора подгруппы
     elif data == "settings_subgroup":
-        await query.answer()
+        await _safe_answer()
         sub_desc = "для этой беседы" if is_group else "вашу"
         text = (
             f"👥 <b>Выберите {sub_desc} подгруппу:</b>\n\n"
@@ -141,13 +150,13 @@ async def settings_callback_handler(update: Update, context: CallbackContext) ->
         sub_num = int(data.split("_")[-1])
         await db.update_user_subgroup(target_id, sub_num)
         sub_label = "Вся группа" if sub_num == 0 else f"{sub_num}-я подгруппа"
-        await query.answer(f"Выбрана: {sub_label}")
+        await _safe_answer(f"Выбрана: {sub_label}")
         # Возврат в главное меню настроек
         user = await db.get_user(target_id)
         await cmd_settings(update, context)
 
     # Кнопка «Назад» в настройки
     elif data == "settings_back":
-        await query.answer()
+        await _safe_answer()
         user = await db.get_user(target_id)
         await cmd_settings(update, context)
