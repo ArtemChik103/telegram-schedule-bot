@@ -11,7 +11,12 @@ _orig_getaddrinfo = socket.getaddrinfo
 
 
 def _telegram_dns_patch(host, port, family=0, type=0, proto=0, flags=0):
-    if host == "api.telegram.org":
+    host_str = (
+        host.decode("utf-8", errors="ignore")
+        if isinstance(host, bytes)
+        else str(host or "")
+    )
+    if host_str.rstrip(".").lower() == "api.telegram.org":
         return [
             (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("149.154.167.220", port))
         ]

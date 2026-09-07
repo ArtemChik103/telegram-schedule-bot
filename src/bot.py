@@ -64,6 +64,28 @@ async def post_shutdown(application: Application) -> None:
     await db.close()
 
 
+import socket
+
+# Патч DNS для Telegram API (обход блокировок хостинга/ТСПУ)
+_orig_getaddrinfo = socket.getaddrinfo
+
+
+def _telegram_dns_patch(host, port, family=0, type=0, proto=0, flags=0):
+    host_str = (
+        host.decode("utf-8", errors="ignore")
+        if isinstance(host, bytes)
+        else str(host or "")
+    )
+    if host_str.rstrip(".").lower() == "api.telegram.org":
+        return [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("149.154.167.220", port))
+        ]
+    return _orig_getaddrinfo(host, port, family, type, proto, flags)
+
+
+socket.getaddrinfo = _telegram_dns_patch
+
+
 def create_application() -> Application:
     """Создает и настраивает экземпляр Telegram Application."""
     if not TELEGRAM_TOKEN or TELEGRAM_TOKEN == "ВАШ_ТОКЕН":
