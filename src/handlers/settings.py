@@ -1,7 +1,7 @@
 import logging
 from telegram import Update
 from telegram.constants import ParseMode
-from telegram.error import BadRequest
+from telegram.error import BadRequest, TimedOut, NetworkError
 from telegram.ext import CallbackContext
 from src.database.db import db
 from src.keyboards.markups import (
@@ -85,7 +85,7 @@ async def settings_callback_handler(update: Update, context: CallbackContext) ->
                 await query.answer(text)
             else:
                 await query.answer()
-        except BadRequest:
+        except (BadRequest, TimedOut, NetworkError):
             pass
 
     # Переключение утреннего дайджеста
@@ -98,7 +98,7 @@ async def settings_callback_handler(update: Update, context: CallbackContext) ->
             await query.edit_message_reply_markup(
                 reply_markup=get_settings_inline_keyboard(user)
             )
-        except BadRequest:
+        except (BadRequest, TimedOut, NetworkError):
             pass
 
     # Переключение вечернего дайджеста
@@ -111,7 +111,7 @@ async def settings_callback_handler(update: Update, context: CallbackContext) ->
             await query.edit_message_reply_markup(
                 reply_markup=get_settings_inline_keyboard(user)
             )
-        except BadRequest:
+        except (BadRequest, TimedOut, NetworkError):
             pass
 
     # Переключение опции «Без пар не будить»
@@ -124,7 +124,7 @@ async def settings_callback_handler(update: Update, context: CallbackContext) ->
             await query.edit_message_reply_markup(
                 reply_markup=get_settings_inline_keyboard(user)
             )
-        except BadRequest:
+        except (BadRequest, TimedOut, NetworkError):
             pass
 
     # Открытие меню выбора подгруппы
@@ -142,7 +142,7 @@ async def settings_callback_handler(update: Update, context: CallbackContext) ->
                 reply_markup=get_subgroup_select_keyboard(),
                 parse_mode=ParseMode.HTML,
             )
-        except BadRequest:
+        except (BadRequest, TimedOut, NetworkError):
             pass
 
     # Установка выбранной подгруппы (0, 1 или 2)

@@ -2,6 +2,7 @@ import io
 import logging
 from telegram import Update
 from telegram.constants import ParseMode
+from telegram.error import BadRequest, TimedOut, NetworkError
 from telegram.ext import CallbackContext
 from src.config import GROUP_NAME, GROUP_ID
 from src.database.db import db
@@ -20,7 +21,10 @@ async def export_calendar_handler(update: Update, context: CallbackContext) -> N
     chat_id = update.effective_chat.id if update.effective_chat else user_id
 
     if update.callback_query:
-        await update.callback_query.answer("Генерирую календарь...")
+        try:
+            await update.callback_query.answer("Генерирую календарь...")
+        except (BadRequest, TimedOut, NetworkError):
+            pass
 
     user = await db.get_user(user_id)
     subgroup = user.get("subgroup", 0) if user else 0

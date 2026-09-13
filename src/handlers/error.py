@@ -8,29 +8,44 @@ from src.config import ADMIN_ID
 
 logger = logging.getLogger(__name__)
 
-# Временные сетевые сбои поллинга (обрыв TCP, SSL-рассинхрон, таймауты get_updates)
-# python-telegram-bot автоматически восстанавливает соединение после них.
-TRANSIENT_POLLING_ERRORS = (NetworkError, TimedOut, RetryAfter)
+# Сетевые и временные сбои Telegram API (таймауты, разрывы сокетов, рейтлимиты).
+# Они являются внешними переходными процессами сети/хостинга и не требуют алертов в ЛС.
+TRANSIENT_NETWORK_ERRORS = (NetworkError, TimedOut, RetryAfter)
+
+# Ожидаемые некритичные описания ошибок Telegram API
+BENIGN_ERROR_PATTERNS = (
+    "Query is too old",
+    "Message is not modified",
+    "chat not found",
+    "bot was blocked by the user",
+    "user is deactivated",
+    "have no rights to send a message",
+    "bot was kicked from the supergroup",
+    "bot is not a member of the supergroup",
+)
 
 
 async def error_handler(update: object, context: CallbackContext) -> None:
-    """Глобальный обработчик ошибок бота с безопасной отправкой отчета админу."""
+    """Глобальный обработчик ошибок бота с безопасной фильтрацией и отправкой отчета админу."""
     err = context.error
+    if not err:
+        return
 
-    # Если ошибка произошла во время фонового опроса Telegram (update is None)
-    # и вызвана временными сетевыми сбоями/SSL-хэндшейком — логируем и не спамим админу
-    if update is None and isinstance(err, TRANSIENT_POLLING_ERRORS):
+    # 1. Сетевые таймауты и сбои транспорта Telegram API (при поллинге или отправке)
+    if isinstance(err, TRANSIENT_NETWORK_ERRORS):
         logger.warning(
-            f"Временный сбой сети при опросе Telegram (авто-восстановление): {err}"
+            f"Временный сетевой сбой Telegram API ({type(err).__name__}): {err}"
         )
         return
 
+    # 2. Ожидаемые пользовательские/клиентские ошибки Telegram API
     err_str = str(err)
-    if "Query is too old" in err_str or "Message is not modified" in err_str:
-        logger.info(f"Ожидаемое исключение Telegram (игнорируется): {err}")
+    if any(pattern in err_str for pattern in BENIGN_ERROR_PATTERNS):
+        logger.info(f"Ожидаемое исключение Telegram API (игнорируется): {err}")
         return
 
-    logger.error("Исключение при обработке update:", exc_info=err)
+    # 3. Реальные неожиданные ошибки приложения — пишем в лог с полным трейсбеком
+    logger.error("Критическое исключение при обработке update:", exc_info=err)
 
     if not ADMIN_ID:
         return
@@ -42,7 +57,7 @@ async def error_handler(update: object, context: CallbackContext) -> None:
         tb_string = "".join(tb_list)
 
         escaped_update = html.escape(str(update)) if update else "None"
-        escaped_error = html.escape(str(context.error))
+        escaped_error = html.escape(str(err))
         escaped_tb = html.escape(tb_string[-2000:])  # последние 2000 символов
 
         message = (
@@ -56,6 +71,9 @@ async def error_handler(update: object, context: CallbackContext) -> None:
             chat_id=ADMIN_ID,
             text=message,
             parse_mode=ParseMode.HTML,
+            read_timeout=15.0,
+            write_timeout=15.0,
+            connect_timeout=10.0,
         )
     except Exception as e:
         logger.error(f"Не удалось отправить отчет об ошибке администратору: {e}")

@@ -2,7 +2,7 @@ import logging
 from datetime import datetime, timedelta
 from telegram import Update
 from telegram.constants import ParseMode
-from telegram.error import BadRequest
+from telegram.error import BadRequest, TimedOut, NetworkError
 from telegram.ext import CallbackContext
 from src.config import TIMEZONE, GROUP_ID
 from src.api.client import api_client
@@ -114,6 +114,8 @@ async def send_teacher_schedule_card(
             await update.callback_query.edit_message_text(
                 full_text, reply_markup=markup, parse_mode=ParseMode.HTML
             )
+        except (TimedOut, NetworkError) as e:
+            logger.warning(f"Сетевой сбой при отправке карточки преподавателя: {e}")
         except BadRequest as e:
             if "Message is not modified" not in str(e):
                 logger.warning(f"Ошибка редактирования сообщения: {e}")
@@ -125,7 +127,11 @@ async def teacher_callback_handler(update: Update, context: CallbackContext) -> 
     if not query or not query.data:
         return
 
-    await query.answer()
+    try:
+        await query.answer()
+    except (BadRequest, TimedOut, NetworkError):
+        pass
+
     data = query.data
 
     # Возврат к общему списку преподавателей нашей группы
@@ -139,6 +145,8 @@ async def teacher_callback_handler(update: Update, context: CallbackContext) -> 
         )
         try:
             await query.edit_message_text(msg_text, reply_markup=markup, parse_mode=ParseMode.HTML)
+        except (TimedOut, NetworkError) as e:
+            logger.warning(f"Сетевой сбой при возврате к списку преподавателей: {e}")
         except BadRequest as e:
             if "Message is not modified" not in str(e):
                 logger.warning(f"Ошибка при возврате к списку преподавателей: {e}")
@@ -166,6 +174,8 @@ async def teacher_callback_handler(update: Update, context: CallbackContext) -> 
                 reply_markup=get_teacher_schedule_keyboard(teacher_id, active_tab="status"),
                 parse_mode=ParseMode.HTML,
             )
+        except (TimedOut, NetworkError) as e:
+            logger.warning(f"Сетевой сбой при обновлении статуса преподавателя: {e}")
         except BadRequest as e:
             if "Message is not modified" not in str(e):
                 logger.warning(f"Ошибка редактирования: {e}")
@@ -184,6 +194,8 @@ async def teacher_callback_handler(update: Update, context: CallbackContext) -> 
                 reply_markup=get_teacher_schedule_keyboard(teacher_id, active_tab="today"),
                 parse_mode=ParseMode.HTML,
             )
+        except (TimedOut, NetworkError) as e:
+            logger.warning(f"Сетевой сбой при показе расписания на сегодня: {e}")
         except BadRequest as e:
             if "Message is not modified" not in str(e):
                 logger.warning(f"Ошибка редактирования: {e}")
@@ -202,6 +214,8 @@ async def teacher_callback_handler(update: Update, context: CallbackContext) -> 
                 reply_markup=get_teacher_schedule_keyboard(teacher_id, active_tab="tomorrow"),
                 parse_mode=ParseMode.HTML,
             )
+        except (TimedOut, NetworkError) as e:
+            logger.warning(f"Сетевой сбой при показе расписания на завтра: {e}")
         except BadRequest as e:
             if "Message is not modified" not in str(e):
                 logger.warning(f"Ошибка редактирования: {e}")
@@ -226,6 +240,8 @@ async def teacher_callback_handler(update: Update, context: CallbackContext) -> 
                 reply_markup=get_teacher_week_keyboard(teacher_id, active_day=active_day),
                 parse_mode=ParseMode.HTML,
             )
+        except (TimedOut, NetworkError) as e:
+            logger.warning(f"Сетевой сбой при показе недели преподавателя: {e}")
         except BadRequest as e:
             if "Message is not modified" not in str(e):
                 logger.warning(f"Ошибка редактирования недели преподавателя: {e}")
@@ -250,6 +266,8 @@ async def teacher_callback_handler(update: Update, context: CallbackContext) -> 
                 reply_markup=get_teacher_week_keyboard(teacher_id, active_day=day_num),
                 parse_mode=ParseMode.HTML,
             )
+        except (TimedOut, NetworkError) as e:
+            logger.warning(f"Сетевой сбой при переключении дня преподавателя: {e}")
         except BadRequest as e:
             if "Message is not modified" not in str(e):
                 logger.warning(f"Ошибка переключения дня преподавателя: {e}")

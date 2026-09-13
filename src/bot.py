@@ -64,7 +64,13 @@ async def post_shutdown(application: Application) -> None:
     await db.close()
 
 
+import asyncio
 import socket
+from typing import Optional, Tuple
+from telegram.error import TimedOut, NetworkError
+from telegram.request import HTTPXRequest, BaseRequest
+from telegram.request._requestdata import RequestData
+from telegram._utils.defaultvalue import DefaultValue
 
 # Патч DNS для Telegram API (обход блокировок хостинга/ТСПУ)
 _orig_getaddrinfo = socket.getaddrinfo
@@ -86,6 +92,49 @@ def _telegram_dns_patch(host, port, family=0, type=0, proto=0, flags=0):
 socket.getaddrinfo = _telegram_dns_patch
 
 
+class ResilientHTTPXRequest(HTTPXRequest):
+    """
+    HTTP-клиент с автоматическими повторными попытками (retries) при кратковременных
+    сетевых сбоях и таймаутах Telegram API, устраняющий случайные дропы запросов.
+    """
+
+    async def do_request(
+        self,
+        url: str,
+        method: str,
+        request_data: Optional[RequestData] = None,
+        read_timeout: float | None | DefaultValue = BaseRequest.DEFAULT_NONE,
+        write_timeout: float | None | DefaultValue = BaseRequest.DEFAULT_NONE,
+        connect_timeout: float | None | DefaultValue = BaseRequest.DEFAULT_NONE,
+        pool_timeout: float | None | DefaultValue = BaseRequest.DEFAULT_NONE,
+    ) -> Tuple[int, bytes]:
+        # Для getUpdates (поллинг) повторы не нужны, так как PTB сам управляет бесконечным циклом опроса
+        is_get_updates = url.rstrip("/").endswith("getUpdates")
+        max_retries = 0 if is_get_updates else 2
+
+        for attempt in range(max_retries + 1):
+            try:
+                return await super().do_request(
+                    url=url,
+                    method=method,
+                    request_data=request_data,
+                    read_timeout=read_timeout,
+                    write_timeout=write_timeout,
+                    connect_timeout=connect_timeout,
+                    pool_timeout=pool_timeout,
+                )
+            except (TimedOut, NetworkError) as err:
+                if attempt < max_retries and "Pool timeout" not in str(err):
+                    backoff = 0.5 * (attempt + 1)
+                    logger.warning(
+                        f"Временный сетевой сбой Telegram API ({err}). "
+                        f"Повтор {attempt + 1}/{max_retries} через {backoff}с..."
+                    )
+                    await asyncio.sleep(backoff)
+                    continue
+                raise
+
+
 def create_application() -> Application:
     """Создает и настраивает экземпляр Telegram Application."""
     if not TELEGRAM_TOKEN or TELEGRAM_TOKEN == "ВАШ_ТОКЕН":
@@ -93,13 +142,25 @@ def create_application() -> Application:
             "TELEGRAM_BOT_TOKEN не задан! Укажите токен в файле .env"
         )
 
-    request = HTTPXRequest(
-        connection_pool_size=8,
-        connect_timeout=15.0,
-        read_timeout=30.0,
-        write_timeout=20.0,
-        pool_timeout=10.0,
+    sock_opts = [(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)]
+    if hasattr(socket, "TCP_NODELAY"):
+        sock_opts.append((socket.IPPROTO_TCP, socket.TCP_NODELAY, 1))
+    if hasattr(socket, "TCP_KEEPIDLE"):
+        sock_opts.append((socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 30))
+    if hasattr(socket, "TCP_KEEPINTVL"):
+        sock_opts.append((socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10))
+    if hasattr(socket, "TCP_KEEPCNT"):
+        sock_opts.append((socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3))
+
+    request = ResilientHTTPXRequest(
+        connection_pool_size=16,
+        connect_timeout=20.0,
+        read_timeout=35.0,
+        write_timeout=25.0,
+        pool_timeout=15.0,
+        media_write_timeout=40.0,
         http_version="1.1",
+        socket_options=sock_opts,
     )
 
     application = (

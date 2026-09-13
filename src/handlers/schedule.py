@@ -2,7 +2,7 @@ import logging
 from datetime import datetime, timedelta
 from telegram import Update
 from telegram.constants import ParseMode
-from telegram.error import BadRequest
+from telegram.error import BadRequest, TimedOut, NetworkError
 from telegram.ext import CallbackContext
 from src.config import TIMEZONE, GROUP_ID
 from src.database.db import db
@@ -168,7 +168,11 @@ async def week_callback_handler(update: Update, context: CallbackContext) -> Non
     if not query or not query.data or not update.effective_user:
         return
 
-    await query.answer()
+    try:
+        await query.answer()
+    except (BadRequest, TimedOut, NetworkError):
+        pass
+
     data = query.data
     user = await db.get_user(update.effective_user.id)
     subgroup = user.get("subgroup", 0) if user else 0
@@ -202,6 +206,8 @@ async def week_callback_handler(update: Update, context: CallbackContext) -> Non
                 reply_markup=markup,
                 parse_mode=ParseMode.HTML,
             )
+        except (TimedOut, NetworkError) as e:
+            logger.warning(f"Сетевой сбой при обновлении дня недели: {e}")
         except BadRequest as e:
             if "Message is not modified" not in str(e):
                 logger.warning(f"Ошибка при edit_message_text: {e}")
@@ -224,6 +230,8 @@ async def week_callback_handler(update: Update, context: CallbackContext) -> Non
                 reply_markup=markup,
                 parse_mode=ParseMode.HTML,
             )
+        except (TimedOut, NetworkError) as e:
+            logger.warning(f"Сетевой сбой при переключении недели: {e}")
         except BadRequest as e:
             if "Message is not modified" not in str(e):
                 logger.warning(f"Ошибка при switch_week: {e}")
@@ -242,6 +250,8 @@ async def week_callback_handler(update: Update, context: CallbackContext) -> Non
                 reply_markup=markup,
                 parse_mode=ParseMode.HTML,
             )
+        except (TimedOut, NetworkError) as e:
+            logger.warning(f"Сетевой сбой при показе полной недели: {e}")
         except BadRequest as e:
             if "Message is not modified" not in str(e):
                 logger.warning(f"Ошибка при full_week: {e}")
