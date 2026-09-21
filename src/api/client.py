@@ -40,10 +40,12 @@ class AmSUApiClient:
     def _get_client(self) -> httpx.AsyncClient:
         """Возвращает или создает долгоживущий асинхронный HTTP-клиент."""
         if self._client is None or self._client.is_closed:
+            proxy = os.getenv("AMSU_PROXY") or os.getenv("HTTP_PROXY") or None
             self._client = httpx.AsyncClient(
                 timeout=httpx.Timeout(10.0, connect=6.0),
                 headers={"User-Agent": "AmSU-Schedule-Bot/2.0"},
                 limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
+                proxy=proxy,
             )
         return self._client
 
