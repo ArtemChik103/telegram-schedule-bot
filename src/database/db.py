@@ -163,7 +163,9 @@ class Database:
 
     async def load_schedule(self, group_id: int) -> dict | None:
         """Загружает JSON расписания группы из SQLite."""
-        data, _ = await self.load_schedule_with_meta(group_id)
+        data, updated_at = await self.load_schedule_with_meta(group_id)
+        if data and isinstance(data, dict) and updated_at:
+            data["_cached_at_date"] = updated_at[:10]
         return data
 
     async def load_schedule_with_meta(self, group_id: int) -> tuple[dict | None, str | None]:

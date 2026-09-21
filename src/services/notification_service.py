@@ -186,11 +186,11 @@ def setup_scheduled_jobs(application: Application) -> None:
         name="evening_digest",
     )
 
-    # Фоновая проверка изменений расписания (каждый 1 час, первая проверка через 5 минут после старта)
+    # Фоновая проверка изменений расписания (каждые 3 часа, первая проверка через 10 минут после старта)
     job_queue.run_repeating(
         check_schedule_changes_job,
-        interval=3600,
-        first=300,
+        interval=10800,
+        first=600,
         name="schedule_diff_checker",
     )
 

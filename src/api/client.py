@@ -125,9 +125,15 @@ class AmSUApiClient:
         if not person_ids:
             return data
 
-        # Параллельно запрашиваем расписание всех преподавателей группы
-        tasks = [self.get_teacher_schedule(pid) for pid in person_ids]
-        teacher_schedules = await asyncio.gather(*tasks, return_exceptions=True)
+        # Запрашиваем расписание преподавателей группы с небольшой паузой
+        teacher_schedules = []
+        for pid in person_ids:
+            try:
+                t_sched = await self.get_teacher_schedule(pid)
+                teacher_schedules.append(t_sched)
+                await asyncio.sleep(0.1)
+            except Exception:
+                teacher_schedules.append(None)
 
         # Карта потоков: (person_id, weekday, parity, lesson) -> set of other group names
         stream_map: dict[tuple[int, int, int, int], set[str]] = {}

@@ -4,6 +4,7 @@ from src.services.schedule_service import (
     get_bell_schedule,
     get_bell_schedule_str,
     get_week_type,
+    get_academic_week_parity,
     get_lessons_for_day,
     render_progress_bar,
     format_minutes_delta,
@@ -62,6 +63,48 @@ def test_week_parity_calculation():
     # Через 2 недели (+14 дней)
     in_two_weeks = date(2026, 9, 21)
     assert get_week_type(schedule_data, in_two_weeks, reference_date=base_monday) == 1
+
+
+def test_week_parity_with_cached_at_date():
+    # Кэш был сохранен в четверг 17.09.2026, когда действовала Неделя 1
+    schedule_data = {
+        "current_week": 1,
+        "_cached_at_date": "2026-09-17 14:30:00",
+    }
+    # Воскресенье 20.09.2026 той же недели - еще Неделя 1
+    assert get_week_type(schedule_data, date(2026, 9, 20)) == 1
+
+    # Понедельник 21.09.2026 (следующая неделя) - должна стать Неделя 2
+    assert get_week_type(schedule_data, date(2026, 9, 21)) == 2
+
+    # Вторник 22.09.2026 - по-прежнему Неделя 2
+    assert get_week_type(schedule_data, date(2026, 9, 22)) == 2
+
+    # Через неделю 28.09.2026 - снова Неделя 1
+    assert get_week_type(schedule_data, date(2026, 9, 28)) == 1
+
+
+def test_academic_week_parity():
+    # Проверяем осенний семестр 2026
+    # 31.08–06.09: нечетная (1)
+    assert get_academic_week_parity(date(2026, 8, 31)) == 1
+    assert get_academic_week_parity(date(2026, 9, 6)) == 1
+
+    # 07.09–13.09: четная (2)
+    assert get_academic_week_parity(date(2026, 9, 7)) == 2
+    assert get_academic_week_parity(date(2026, 9, 13)) == 2
+
+    # 14.09–20.09: нечетная (1)
+    assert get_academic_week_parity(date(2026, 9, 14)) == 1
+    assert get_academic_week_parity(date(2026, 9, 20)) == 1
+
+    # 21.09–27.09: четная (2)
+    assert get_academic_week_parity(date(2026, 9, 21)) == 2
+    assert get_academic_week_parity(date(2026, 9, 27)) == 2
+
+    # Fallback get_week_type при None
+    assert get_week_type(None, date(2026, 9, 21)) == 2
+    assert get_week_type({}, date(2026, 9, 21)) == 2
 
 
 def test_get_lessons_for_day_filters_empty():

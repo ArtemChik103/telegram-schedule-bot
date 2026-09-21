@@ -46,6 +46,23 @@ def get_bell_schedule_str(schedule_data: dict | None) -> dict[int, str]:
     }
 
 
+def get_academic_week_parity(target_date: date) -> int:
+    """
+    Вычисляет четность недели по официальному академическому календарю АмГУ (1 = нечетная, 2 = четная).
+    Осенний семестр 2026/2027 стартовал 01.09.2026 (вторник).
+    Опорный понедельник семестра: 31.08.2026 (Неделя 1, нечетная).
+    31.08–06.09: нечетная (1)
+    07.09–13.09: четная (2)
+    14.09–20.09: нечетная (1)
+    21.09–27.09: четная (2)
+    28.09–04.10: нечетная (1) и т.д.
+    """
+    SEMESTER_ANCHOR_MONDAY = date(2026, 8, 31)
+    target_monday = target_date - timedelta(days=target_date.weekday())
+    diff_weeks = (target_monday - SEMESTER_ANCHOR_MONDAY).days // 7
+    return 1 if (diff_weeks % 2 == 0) else 2
+
+
 def get_week_type(
     schedule_data: dict | None,
     target_date: date,
@@ -55,14 +72,28 @@ def get_week_type(
     Вычисляет четность недели (1 = нечетная, 2 = четная) для целевой даты.
     Использует смещение недель относительно понедельников.
     Если данные получены из резервного кэша SQLite, учитывает дату фиксации кэша _cached_at_date.
+    Если данных нет вообще, использует академический календарь АмГУ.
     """
-    if not schedule_data or "current_week" not in schedule_data:
-        return 1
+    if not schedule_data or not isinstance(schedule_data, dict):
+        return get_academic_week_parity(target_date)
+
+    if "current_week" not in schedule_data:
+        return get_academic_week_parity(target_date)
 
     current_week_type = schedule_data.get("current_week", 1)
 
+    # 1. Если явно задана базовая дата отсчета (например в тестах)
+    if reference_date:
+        base_monday = reference_date - timedelta(days=reference_date.weekday())
+        target_monday = target_date - timedelta(days=target_date.weekday())
+        week_diff = (target_monday - base_monday).days // 7
+        if week_diff % 2 != 0:
+            return 2 if current_week_type == 1 else 1
+        return current_week_type
+
+    # 2. Если данные из резервного кэша SQLite с известной датой фиксации
     cached_date = None
-    if isinstance(schedule_data, dict) and "_cached_at_date" in schedule_data:
+    if "_cached_at_date" in schedule_data:
         try:
             cached_date = datetime.strptime(
                 str(schedule_data["_cached_at_date"])[:10], "%Y-%m-%d"
@@ -70,7 +101,7 @@ def get_week_type(
         except Exception:
             cached_date = None
 
-    base_date = reference_date or cached_date or datetime.now(TIMEZONE).date()
+    base_date = cached_date or datetime.now(TIMEZONE).date()
 
     # Смещаем обе даты к их понедельникам
     base_monday = base_date - timedelta(days=base_date.weekday())
