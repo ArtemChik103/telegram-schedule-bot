@@ -168,10 +168,10 @@ def split_telegram_message(text: str, max_chunk_size: int = 3900) -> list[str]:
         return [text]
 
     chunks = []
-    current_chunk = ""
     separator = "\n\n━━━━━━━━━━━━━━━━━━━━━\n\n"
-    blocks = text.split(separator)
-    if len(blocks) > 1:
+    if separator in text:
+        blocks = text.split(separator)
+        current_chunk = ""
         for block in blocks:
             piece = block if not current_chunk else separator + block
             if len(current_chunk) + len(piece) <= max_chunk_size:
@@ -179,11 +179,20 @@ def split_telegram_message(text: str, max_chunk_size: int = 3900) -> list[str]:
             else:
                 if current_chunk:
                     chunks.append(current_chunk)
-                current_chunk = block
+                    current_chunk = ""
+                if len(block) > max_chunk_size:
+                    sub = split_telegram_message(block, max_chunk_size)
+                    chunks.extend(sub[:-1])
+                    current_chunk = sub[-1]
+                else:
+                    current_chunk = block
         if current_chunk:
             chunks.append(current_chunk)
-    else:
+        return chunks
+
+    if "\n\n" in text:
         paragraphs = text.split("\n\n")
+        current_chunk = ""
         for para in paragraphs:
             piece = para if not current_chunk else "\n\n" + para
             if len(current_chunk) + len(piece) <= max_chunk_size:
@@ -191,11 +200,37 @@ def split_telegram_message(text: str, max_chunk_size: int = 3900) -> list[str]:
             else:
                 if current_chunk:
                     chunks.append(current_chunk)
-                current_chunk = para
+                    current_chunk = ""
+                if len(para) > max_chunk_size:
+                    sub = split_telegram_message(para, max_chunk_size)
+                    chunks.extend(sub[:-1])
+                    current_chunk = sub[-1]
+                else:
+                    current_chunk = para
         if current_chunk:
             chunks.append(current_chunk)
+        return chunks
 
-    return chunks if chunks else [text[:max_chunk_size], text[max_chunk_size:]]
+    if "\n" in text:
+        lines = text.split("\n")
+        current_chunk = ""
+        for line in lines:
+            piece = line if not current_chunk else "\n" + line
+            if len(current_chunk) + len(piece) <= max_chunk_size:
+                current_chunk += piece
+            else:
+                if current_chunk:
+                    chunks.append(current_chunk)
+                    current_chunk = ""
+                if len(line) > max_chunk_size:
+                    chunks.extend([line[i:i + max_chunk_size] for i in range(0, len(line), max_chunk_size)])
+                else:
+                    current_chunk = line
+        if current_chunk:
+            chunks.append(current_chunk)
+        return chunks
+
+    return [text[i:i + max_chunk_size] for i in range(0, len(text), max_chunk_size)]
 
 
 async def week_callback_handler(update: Update, context: CallbackContext) -> None:

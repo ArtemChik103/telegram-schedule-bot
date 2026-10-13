@@ -51,6 +51,15 @@ def test_search_teachers():
     assert len(res_layout_petrov) == 1
     assert res_layout_petrov[0]["id"] == 2
 
+    # Проверка регистра при неверной раскладке (автокапитализация на смартфонах)
+    res_layout_cap = search_teachers("Hz,jdf", sample_teachers)
+    assert len(res_layout_cap) == 1
+    assert res_layout_cap[0]["id"] == 4
+
+    res_layout_short_cap = search_teachers("Gtn", sample_teachers)
+    assert len(res_layout_short_cap) == 1
+    assert res_layout_short_cap[0]["id"] == 2
+
 
 def test_format_teacher_day_schedule():
     sample_data = {

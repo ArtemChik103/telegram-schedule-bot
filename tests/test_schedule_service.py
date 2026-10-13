@@ -363,13 +363,23 @@ def test_extract_building():
     assert extract_building("326 (5)") == "5"
     assert extract_building("онлайн") == "Онлайн"
     assert extract_building("с/з (ЗТ)") == "ЗТ"
+    assert extract_building("с/з(ЗТ)") == "ЗТ"
     assert extract_building("корп. 7 ауд 101") == "7"
+    assert extract_building("БЦ") == "БЦ"
+    assert extract_building("БЦ 301") == "БЦ"
+    assert extract_building("ФОК") == "ФОК"
+    assert extract_building("214/1") == "1"
+    assert extract_building("5-326") == "5"
+    assert extract_building("Главный корпус") == "Главный"
     assert extract_building("") is None
     assert extract_building("304") is None
 
     assert "корпус 5" in format_building_label("5")
     assert "корпус ЗТ" in format_building_label("ЗТ")
     assert "онлайн" in format_building_label("Онлайн")
+    assert "Бизнес-центр" in format_building_label("БЦ")
+    assert "Спорткомплекс" in format_building_label("ФОК")
+    assert "главный корпус" in format_building_label("Главный")
 
 
 def test_building_change_in_day_schedule():
@@ -428,7 +438,7 @@ def test_format_full_week_schedule_length_protection():
     text = format_full_week_schedule(heavy_data, is_next_week=False)
     # Текст обязан укладываться в лимит Telegram (4096 символов) благодаря автоматическому компактному режиму
     assert len(text) <= 4096
-    assert "Расписание на текущая неделю" in text or "Расписание" in text
+    assert "Расписание на текущую неделю" in text
 
 
 def test_split_telegram_message():
@@ -441,4 +451,19 @@ def test_split_telegram_message():
     assert len(chunks) > 1
     for chunk in chunks:
         assert len(chunk) <= 500
+
+    # Проверка разделения неделимого блока, превышающего max_chunk_size
+    giant_block = "A" * 5000 + "\n\n━━━━━━━━━━━━━━━━━━━━━\n\n" + "B" * 200
+    chunks_giant = split_telegram_message(giant_block, max_chunk_size=1000)
+    assert len(chunks_giant) >= 5
+    for chunk in chunks_giant:
+        assert len(chunk) <= 1000
+
+
+def test_parse_iso_time():
+    from src.services.schedule_service import parse_iso_time
+    assert parse_iso_time("2000-01-01T08:15:00.000Z") == time(8, 15)
+    assert parse_iso_time("09:55") == time(9, 55)
+    assert parse_iso_time("13:35:00") == time(13, 35)
+    assert parse_iso_time("invalid") == time(0, 0)
 

@@ -25,14 +25,20 @@ class Database:
             if dir_name:
                 os.makedirs(dir_name, exist_ok=True)
 
-            # Если целевой файл в подпапке еще не существует, но в корне есть старый bot_data.db
-            if not os.path.exists(self.db_path) and os.path.exists("bot_data.db"):
-                if os.path.abspath(self.db_path) != os.path.abspath("bot_data.db"):
-                    shutil.copyfile("bot_data.db", self.db_path)
-                    logger.info(f"Миграция базы данных: скопирован bot_data.db -> {self.db_path}")
-                    for ext in ("-wal", "-shm"):
-                        if os.path.exists("bot_data.db" + ext):
-                            shutil.copyfile("bot_data.db" + ext, self.db_path + ext)
+            # Если целевой файл в подпапке еще не существует, проверяем кандидатов для миграции
+            if not os.path.exists(self.db_path):
+                candidates = ["/app/legacy/bot_data.db", "bot_data.db"]
+                for candidate in candidates:
+                    if os.path.exists(candidate) and os.path.abspath(self.db_path) != os.path.abspath(candidate):
+                        shutil.copyfile(candidate, self.db_path)
+                        logger.info(f"Миграция базы данных: скопирован {candidate} -> {self.db_path}")
+                        for ext in ("-wal", "-shm"):
+                            if os.path.exists(candidate + ext):
+                                try:
+                                    shutil.copyfile(candidate + ext, self.db_path + ext)
+                                except Exception as err:
+                                    logger.warning(f"Не удалось скопировать {candidate + ext}: {err}")
+                        break
         except Exception as e:
             logger.warning(f"Ошибка при подготовке директории БД ({self.db_path}): {e}")
 

@@ -4,7 +4,7 @@ from telegram import Update
 from telegram.constants import ParseMode
 from telegram.error import BadRequest, TimedOut, NetworkError
 from telegram.ext import CallbackContext
-from src.config import TIMEZONE, GROUP_ID
+from src.config import TIMEZONE, GROUP_ID, GROUP_NAME
 from src.api.client import api_client
 from src.services.schedule_service import (
     search_teachers,
@@ -42,14 +42,14 @@ async def cmd_teacher(update: Update, context: CallbackContext) -> None:
 
         if not teachers:
             await update.message.reply_text(
-                "⚠️ Не удалось загрузить список преподавателей группы ИС231.",
+                f"⚠️ Не удалось загрузить список преподавателей группы {GROUP_NAME}.",
                 parse_mode=ParseMode.HTML,
             )
             return
 
         markup = get_teachers_inline_keyboard(teachers)
         msg_text = (
-            "👨‍🏫 <b>Преподаватели группы ИС231:</b>\n\n"
+            f"👨‍🏫 <b>Преподаватели группы {GROUP_NAME}:</b>\n\n"
             "Выберите преподавателя, чтобы узнать его расписание или где он находится прямо сейчас 👇"
         )
         await update.message.reply_text(msg_text, reply_markup=markup, parse_mode=ParseMode.HTML)

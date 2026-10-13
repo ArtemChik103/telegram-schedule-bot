@@ -9,7 +9,9 @@ services:
       - .env
     environment:
       - TZ=${TIMEZONE:-Asia/Yakutsk}
-      - DB_PATH=${DB_PATH:-/app/data/bot_data.db}
+      - DB_PATH=/app/data/bot_data.db
     volumes:
       # Сохраняем базу данных и связанные WAL/SHM файлы на хосте через монтирование директории
       - ./data:/app/data
+      # Монтируем директорию проекта для автоматической миграции старой базы данных при обновлении
+      - .:/app/legacy:ro

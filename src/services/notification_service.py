@@ -68,18 +68,24 @@ async def send_morning_digest(context: CallbackContext, users: list[dict] | None
             return
 
         today = datetime.now(TIMEZONE).date()
+        today_str = str(today)
+        _cleanup_old_cache(today_str)
         schedule_data, _ = await api_client.get_group_schedule(GROUP_ID)
         weekday = today.isoweekday()
         week_type = get_week_type(schedule_data, today)
 
         for user in users:
             user_id = user["user_id"]
+            if (user_id, today_str, "morning") in _sent_digests:
+                continue
+
             subgroup = user.get("subgroup", 0)
             notify_only_lessons = user.get("notify_only_with_lessons", 1)
 
             lessons = get_lessons_for_day(schedule_data, weekday, week_type, subgroup)
             # Если включена опция «не будить в дни без пар» и пар нет — пропускаем
             if notify_only_lessons and not lessons:
+                _sent_digests.add((user_id, today_str, "morning"))
                 continue
 
             is_group = user_id < 0
@@ -90,7 +96,9 @@ async def send_morning_digest(context: CallbackContext, users: list[dict] | None
             )
             text = greeting + format_day_schedule(schedule_data, today, subgroup=subgroup)
 
-            await send_safe_message(context.bot, user_id, text)
+            sent = await send_safe_message(context.bot, user_id, text)
+            if sent:
+                _sent_digests.add((user_id, today_str, "morning"))
 
     except Exception as e:
         logger.error(f"Ошибка в send_morning_digest: {e}", exc_info=True)
@@ -104,13 +112,19 @@ async def send_evening_digest(context: CallbackContext, users: list[dict] | None
         if not users:
             return
 
-        tomorrow = datetime.now(TIMEZONE).date() + timedelta(days=1)
+        today = datetime.now(TIMEZONE).date()
+        today_str = str(today)
+        _cleanup_old_cache(today_str)
+        tomorrow = today + timedelta(days=1)
         schedule_data, _ = await api_client.get_group_schedule(GROUP_ID)
         tomorrow_weekday = tomorrow.isoweekday()
         week_type = get_week_type(schedule_data, tomorrow)
 
         for user in users:
             user_id = user["user_id"]
+            if (user_id, today_str, "evening") in _sent_digests:
+                continue
+
             subgroup = user.get("subgroup", 0)
             notify_only_lessons = user.get("notify_only_with_lessons", 1)
 
@@ -119,6 +133,7 @@ async def send_evening_digest(context: CallbackContext, users: list[dict] | None
             )
             # Если завтра нет пар и включен тихий режим — пропускаем
             if notify_only_lessons and not lessons:
+                _sent_digests.add((user_id, today_str, "evening"))
                 continue
 
             is_group = user_id < 0
@@ -129,7 +144,9 @@ async def send_evening_digest(context: CallbackContext, users: list[dict] | None
             )
             text = greeting + format_day_schedule(schedule_data, tomorrow, subgroup=subgroup)
 
-            await send_safe_message(context.bot, user_id, text)
+            sent = await send_safe_message(context.bot, user_id, text)
+            if sent:
+                _sent_digests.add((user_id, today_str, "evening"))
 
     except Exception as e:
         logger.error(f"Ошибка в send_evening_digest: {e}", exc_info=True)
@@ -227,6 +244,7 @@ async def send_lesson_reminders_job(context: CallbackContext) -> None:
         now_dt = datetime.now(TIMEZONE)
         today = now_dt.date()
         today_str = str(today)
+        _cleanup_old_cache(today_str)
         weekday = today.isoweekday()
 
         if weekday == 7:
@@ -249,8 +267,8 @@ async def send_lesson_reminders_job(context: CallbackContext) -> None:
             start_dt = datetime.combine(today, start_time, tzinfo=TIMEZONE)
             diff_mins = int((start_dt - now_dt).total_seconds() // 60)
 
-            # Окно уведомления: за 10..15 минут до начала
-            if 10 <= diff_mins <= 15:
+            # Окно предварительного напоминания: за LESSON_REMINDER_MINUTES (по умолчанию 15 мин) до начала
+            if 0 < diff_mins <= LESSON_REMINDER_MINUTES:
                 for user in users:
                     user_id = user["user_id"]
                     subgroup = user.get("subgroup", 0)
@@ -385,18 +403,6 @@ def setup_scheduled_jobs(application: Application) -> None:
         interval=60,
         first=10,
         name="lesson_reminders",
-    )
-
-    # Дефолтные глобальные рассылки (как резерв)
-    job_queue.run_daily(
-        send_morning_digest,
-        time=time(7, 30, tzinfo=TIMEZONE),
-        name="morning_digest_default",
-    )
-    job_queue.run_daily(
-        send_evening_digest,
-        time=time(20, 0, tzinfo=TIMEZONE),
-        name="evening_digest_default",
     )
 
     # Фоновая проверка изменений расписания (каждые 3 часа, первая проверка через 10 минут после старта)

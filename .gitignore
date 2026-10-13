@@ -35,7 +35,8 @@ env/
 *.db-wal
 *.db-shm
 bot_data.db
-data/
+data/*
+!data/.gitkeep
 schedule_cache.json
 
 # IDEs

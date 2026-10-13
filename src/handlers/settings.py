@@ -61,9 +61,12 @@ async def cmd_settings(update: Update, context: CallbackContext) -> None:
             text, reply_markup=markup, parse_mode=ParseMode.HTML
         )
     elif update.callback_query:
-        await update.callback_query.edit_message_text(
-            text, reply_markup=markup, parse_mode=ParseMode.HTML
-        )
+        try:
+            await update.callback_query.edit_message_text(
+                text, reply_markup=markup, parse_mode=ParseMode.HTML
+            )
+        except (BadRequest, TimedOut, NetworkError):
+            pass
 
 
 async def settings_callback_handler(update: Update, context: CallbackContext) -> None:

@@ -110,3 +110,31 @@ async def test_database_lifecycle():
                 os.remove(temp_db_path)
             except Exception:
                 pass
+
+
+@pytest.mark.asyncio
+async def test_database_directory_migration():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        fake_legacy = os.path.join(tmp_dir, "fake_legacy.db")
+        with open(fake_legacy, "w", encoding="utf-8") as f:
+            f.write("mock db content")
+
+        target_dir = os.path.join(tmp_dir, "sub", "data")
+        target_db = os.path.join(target_dir, "bot_data.db")
+
+        from unittest.mock import patch
+        with patch("src.database.db.os.path.exists") as mock_exists, \
+             patch("src.database.db.shutil.copyfile") as mock_copy:
+            def side_effect(path):
+                if path == target_db:
+                    return False
+                if path == "/app/legacy/bot_data.db":
+                    return True
+                return False
+
+            mock_exists.side_effect = side_effect
+            db = Database(db_path=target_db)
+
+            mock_copy.assert_any_call("/app/legacy/bot_data.db", target_db)
+
+

@@ -23,17 +23,25 @@ class AmSUApiClient:
 
     @property
     def group_lock(self) -> asyncio.Lock:
-        if self._group_lock is None:
+        loop = asyncio.get_running_loop()
+        if self._group_lock is None or getattr(self, "_group_lock_loop", None) != loop:
             self._group_lock = asyncio.Lock()
+            self._group_lock_loop = loop
         return self._group_lock
 
     @property
     def teachers_list_lock(self) -> asyncio.Lock:
-        if self._teachers_list_lock is None:
+        loop = asyncio.get_running_loop()
+        if self._teachers_list_lock is None or getattr(self, "_teachers_list_lock_loop", None) != loop:
             self._teachers_list_lock = asyncio.Lock()
+            self._teachers_list_lock_loop = loop
         return self._teachers_list_lock
 
     def get_teacher_lock(self, teacher_id: int) -> asyncio.Lock:
+        loop = asyncio.get_running_loop()
+        if getattr(self, "_teacher_locks_loop", None) != loop:
+            self._teacher_locks.clear()
+            self._teacher_locks_loop = loop
         if teacher_id not in self._teacher_locks:
             self._teacher_locks[teacher_id] = asyncio.Lock()
         return self._teacher_locks[teacher_id]

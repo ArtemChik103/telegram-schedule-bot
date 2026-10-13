@@ -14,7 +14,7 @@ from src.config import (
 def extract_building(classroom_str: str | None) -> str | None:
     """
     Извлекает обозначение учебного корпуса из строки аудитории.
-    Примеры: '204 (ЗТ)' -> 'ЗТ', '326 (5)' -> '5', 'онлайн' -> 'Онлайн'.
+    Примеры: '204 (ЗТ)' -> 'ЗТ', '326 (5)' -> '5', 'онлайн' -> 'Онлайн', 'БЦ' -> 'БЦ', '214/1' -> '1'.
     """
     if not classroom_str or not isinstance(classroom_str, str):
         return None
@@ -33,12 +33,36 @@ def extract_building(classroom_str: str | None) -> str | None:
         if val:
             return val
 
-    # Ищем явное указание "корп. 5", "корпус 1"
+    # Ищем явное указание "корп. 5", "корпус 1", "корп.7"
     m_corp = re.search(
-        r"(?:корп(?:ус)?\.?\s*([0-9A-Za-zА-Яа-я]+))", clean, re.IGNORECASE
+        r"\bкорп(?:ус)?\.?(?:\s*№\s*|\s+|(?<=\.))([0-9A-Za-zА-Яа-я]+)\b", clean, re.IGNORECASE
     )
     if m_corp:
         return m_corp.group(1).strip()
+
+    # Известные корпуса АмГУ как самостоятельные обозначения
+    if clean.upper() in ("БЦ", "ФОК", "УЛК", "ЗТ") or low.startswith(("бц ", "фок ", "улк ")):
+        if "бц" in low:
+            return "БЦ"
+        if "фок" in low:
+            return "ФОК"
+        if "улк" in low:
+            return "УЛК"
+        if "зт" in low:
+            return "ЗТ"
+
+    if "главн" in low:
+        return "Главный"
+
+    # Нотация через слэш, например "214/1", "305/7", "402/2" (ауд/корпус)
+    m_slash = re.search(r"^\d{2,4}/([0-9A-Za-zА-Яа-я]+)$", clean)
+    if m_slash:
+        return m_slash.group(1).strip()
+
+    # Нотация через дефис, например "1-214", "5-326" (корпус-ауд)
+    m_dash = re.search(r"^([0-9A-Za-zА-Яа-я]+)-\d{2,4}$", clean)
+    if m_dash:
+        return m_dash.group(1).strip()
 
     return None
 
@@ -48,20 +72,31 @@ def format_building_label(building: str | None) -> str:
     if not building:
         return ""
     b = building.strip()
-    if b.lower() in ("онлайн", "дистант"):
+    low = b.lower()
+    if low in ("онлайн", "дистант"):
         return "дистант (онлайн)"
     if b.isdigit():
         return f"корпус {b}"
     if b.upper() == "ЗТ":
         return "корпус ЗТ"
+    if b.upper() == "БЦ":
+        return "корпус БЦ (Бизнес-центр)"
+    if b.upper() == "ФОК":
+        return "корпус ФОК (Спорткомплекс)"
+    if b.upper() == "УЛК":
+        return "корпус УЛК"
+    if low == "главный":
+        return "главный корпус"
     return f"корпус {b}"
 
 
 def parse_iso_time(time_str: str) -> time:
-    """Парсит строку времени ISO (например '2000-01-01T08:15:00.000Z') в объект datetime.time."""
+    """Парсит строку времени ISO (например '2000-01-01T08:15:00.000Z') или HH:MM в объект datetime.time."""
     try:
-        # Извлекаем часть времени HH:MM
-        t_part = time_str.split("T")[1][:5]
+        if "T" in time_str:
+            t_part = time_str.split("T")[1][:5]
+        else:
+            t_part = time_str.strip()[:5]
         h, m = map(int, t_part.split(":"))
         return time(h, m)
     except Exception:
@@ -363,7 +398,7 @@ def format_full_week_schedule(
         current_monday + timedelta(days=7) if is_next_week else current_monday
     )
     week_type = get_week_type(schedule_data, target_monday)
-    week_desc = "следующая" if is_next_week else "текущая"
+    week_desc = "следующую" if is_next_week else "текущую"
     week_parity_desc = "нечетная" if week_type == 1 else "четная"
 
     header = (
@@ -759,10 +794,10 @@ def compute_schedule_diff(
 # --- Функции расписания преподавателей ---
 
 
-# Таблица транслитерации раскладки клавиатуры (английская -> русская)
+# Таблица транслитерации раскладки клавиатуры (английская -> русская, строчные и заглавные)
 EN_TO_RU_LAYOUT = str.maketrans(
-    "qwertyuiop[]asdfghjkl;'zxcvbnm,./`",
-    "йцукенгшщзхъфывапролджэячсмитьбю.ё",
+    "qwertyuiop[]asdfghjkl;'zxcvbnm,./`QWERTYUIOP{}ASDFGHJKL:\"ZXCVBNM<>?~",
+    "йцукенгшщзхъфывапролджэячсмитьбю.ёЙЦУКЕНГШЩЗХЪФЫВАПРОЛДЖЭЯЧСМИТЬБЮ,Ё",
 )
 
 
