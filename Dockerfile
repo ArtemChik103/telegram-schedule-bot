@@ -14,8 +14,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Копируем исходный код
 COPY . .
 
-# Создаем непривилегированного пользователя для безопасности
-RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+# Создаем директорию для базы данных и непривилегированного пользователя для безопасности
+RUN mkdir -p /app/data && useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 USER appuser
 
 # Точка входа

@@ -1,11 +1,60 @@
+import re
 import html
 import hashlib
+from difflib import SequenceMatcher
 from datetime import datetime, date, time, timedelta
 from src.config import (
     TIMEZONE,
     DEFAULT_BELL_SCHEDULE,
     WEEKDAY_NAMES,
+    SEMESTER_ANCHOR_MONDAY,
 )
+
+
+def extract_building(classroom_str: str | None) -> str | None:
+    """
+    Извлекает обозначение учебного корпуса из строки аудитории.
+    Примеры: '204 (ЗТ)' -> 'ЗТ', '326 (5)' -> '5', 'онлайн' -> 'Онлайн'.
+    """
+    if not classroom_str or not isinstance(classroom_str, str):
+        return None
+    clean = classroom_str.strip()
+    if not clean:
+        return None
+
+    low = clean.lower()
+    if "онлайн" in low or "дистант" in low or "teams" in low or "zoom" in low:
+        return "Онлайн"
+
+    # Ищем значение в скобках, например "(ЗТ)", "(5)", "(гл)"
+    m = re.search(r"\(([^)]+)\)", clean)
+    if m:
+        val = m.group(1).strip()
+        if val:
+            return val
+
+    # Ищем явное указание "корп. 5", "корпус 1"
+    m_corp = re.search(
+        r"(?:корп(?:ус)?\.?\s*([0-9A-Za-zА-Яа-я]+))", clean, re.IGNORECASE
+    )
+    if m_corp:
+        return m_corp.group(1).strip()
+
+    return None
+
+
+def format_building_label(building: str | None) -> str:
+    """Форматирует человекочитаемое название корпуса."""
+    if not building:
+        return ""
+    b = building.strip()
+    if b.lower() in ("онлайн", "дистант"):
+        return "дистант (онлайн)"
+    if b.isdigit():
+        return f"корпус {b}"
+    if b.upper() == "ЗТ":
+        return "корпус ЗТ"
+    return f"корпус {b}"
 
 
 def parse_iso_time(time_str: str) -> time:
@@ -49,15 +98,8 @@ def get_bell_schedule_str(schedule_data: dict | None) -> dict[int, str]:
 def get_academic_week_parity(target_date: date) -> int:
     """
     Вычисляет четность недели по официальному академическому календарю АмГУ (1 = нечетная, 2 = четная).
-    Осенний семестр 2026/2027 стартовал 01.09.2026 (вторник).
-    Опорный понедельник семестра: 31.08.2026 (Неделя 1, нечетная).
-    31.08–06.09: нечетная (1)
-    07.09–13.09: четная (2)
-    14.09–20.09: нечетная (1)
-    21.09–27.09: четная (2)
-    28.09–04.10: нечетная (1) и т.д.
+    Опорный понедельник семестра настраивается через SEMESTER_ANCHOR_MONDAY (по умолчанию 31.08.2026).
     """
-    SEMESTER_ANCHOR_MONDAY = date(2026, 8, 31)
     target_monday = target_date - timedelta(days=target_date.weekday())
     diff_weeks = (target_monday - SEMESTER_ANCHOR_MONDAY).days // 7
     return 1 if (diff_weeks % 2 == 0) else 2
@@ -197,13 +239,26 @@ def format_day_schedule(
         return header + "✅ <b>В этот день занятий нет. Отдыхаем!</b>"
 
     parts = []
+    prev_building = None
     for lesson in lessons:
         num = lesson.get("lesson", 1)
         time_str = bells_str.get(num, "??:??–??:??")
         subject = html.escape(lesson.get("discipline_str") or "Не указан")
         teacher = html.escape(lesson.get("person_str") or "Преподаватель не указан")
-        classroom = html.escape(lesson.get("classroom_str") or "Аудитория не указана")
+        raw_room = lesson.get("classroom_str") or "Аудитория не указана"
+        classroom = html.escape(raw_room)
         lesson_sub = lesson.get("subgroup", 0)
+
+        # Детекция смены учебного корпуса между соседними парами
+        curr_building = extract_building(raw_room)
+        building_warning = ""
+        if prev_building and curr_building and prev_building.lower() != curr_building.lower():
+            p_desc = format_building_label(prev_building)
+            c_desc = format_building_label(curr_building)
+            building_warning = f"🚶‍♂️ <i>Внимание: смена корпуса ({p_desc} ➔ {c_desc})!</i>\n"
+
+        if curr_building:
+            prev_building = curr_building
 
         sub_tag = f" <i>[подгруппа {lesson_sub}]</i>" if lesson_sub > 0 else ""
         stream_with = lesson.get("stream_with")
@@ -214,6 +269,7 @@ def format_day_schedule(
         )
 
         parts.append(
+            f"{building_warning}"
             f"🔔 <b>{num}-я пара</b> (<code>{time_str}</code>){sub_tag}\n"
             f"📚 <b>{subject}</b>\n"
             f"🚪 Ауд. <b>{classroom}</b>\n"
@@ -224,12 +280,78 @@ def format_day_schedule(
     return header + "\n".join(parts)
 
 
+def get_short_person_name(full_name: str | None) -> str:
+    """Сокращает ФИО преподавателя до формата 'Фамилия И.О.'."""
+    if not full_name:
+        return ""
+    parts = full_name.strip().split()
+    if len(parts) >= 3:
+        return f"{parts[0]} {parts[1][0]}.{parts[2][0]}."
+    elif len(parts) == 2:
+        return f"{parts[0]} {parts[1][0]}."
+    return parts[0] if parts else ""
+
+
+def format_day_schedule_compact(
+    schedule_data: dict | None,
+    target_date: date,
+    subgroup: int = 0,
+) -> str:
+    """Компактное форматирование дня (для сводки всей недели во избежание лимита в 4096 символов)."""
+    if not schedule_data:
+        return "⚠️ <i>Данные расписания недоступны.</i>"
+
+    weekday = target_date.isoweekday()
+    week_type = get_week_type(schedule_data, target_date)
+    day_name = WEEKDAY_NAMES[weekday - 1]
+    lessons = get_lessons_for_day(schedule_data, weekday, week_type, subgroup)
+    bells_str = get_bell_schedule_str(schedule_data)
+    date_str = target_date.strftime("%d.%m")
+
+    header = f"📅 <b>{day_name} ({date_str})</b>\n"
+    if not lessons:
+        return header + "   <i>Занятий нет</i>"
+
+    lines = [header]
+    prev_building = None
+    for lesson in lessons:
+        num = lesson.get("lesson", 1)
+        time_str = bells_str.get(num, "")
+        raw_subj = (lesson.get("discipline_str") or "Не указан").strip()
+        if len(raw_subj) > 28:
+            raw_subj = raw_subj[:26] + "…"
+        subject = html.escape(raw_subj)
+
+        raw_teacher = get_short_person_name(lesson.get("person_str"))
+        teacher = html.escape(raw_teacher)
+
+        raw_room = (lesson.get("classroom_str") or "—").strip()
+        classroom = html.escape(raw_room)
+        lesson_sub = lesson.get("subgroup", 0)
+        sub_tag = f" [п/г {lesson_sub}]" if lesson_sub > 0 else ""
+
+        curr_building = extract_building(raw_room)
+        b_change = ""
+        if prev_building and curr_building and prev_building.lower() != curr_building.lower():
+            p_desc = format_building_label(prev_building)
+            c_desc = format_building_label(curr_building)
+            b_change = f"   🚶‍♂️ <i>Смена: {p_desc} ➔ {c_desc}</i>\n"
+        if curr_building:
+            prev_building = curr_building
+
+        time_part = f"<code>{time_str}</code> | " if time_str else ""
+        teacher_part = f", {teacher}" if teacher else ""
+        lines.append(f"{b_change}• <b>{num}-я</b> ({time_part}ауд. <b>{classroom}</b>{sub_tag}): <b>{subject}</b>{teacher_part}")
+
+    return "\n".join(lines)
+
+
 def format_full_week_schedule(
     schedule_data: dict | None,
     is_next_week: bool = False,
     subgroup: int = 0,
 ) -> str:
-    """Форматирует сводное расписание на всю неделю."""
+    """Форматирует сводное расписание на всю неделю с автоматической защитой от лимита Telegram (4096 символов)."""
     if not schedule_data:
         return "⚠️ <b>Данные расписания временно недоступны.</b>"
 
@@ -259,7 +381,29 @@ def format_full_week_schedule(
         )
         day_blocks.append(block)
 
-    return header + "\n\n━━━━━━━━━━━━━━━━━━━━━\n\n".join(day_blocks)
+    full_text = header + "\n\n━━━━━━━━━━━━━━━━━━━━━\n\n".join(day_blocks)
+
+    # Защита от ошибки Telegram "BadRequest: Message is too long" (лимит 4096)
+    if len(full_text) > 3900:
+        compact_blocks = []
+        for day_idx in range(6):
+            d = target_monday + timedelta(days=day_idx)
+            compact_blocks.append(
+                format_day_schedule_compact(schedule_data, d, subgroup=subgroup)
+            )
+        full_text = header + "\n\n".join(compact_blocks)
+
+    # Если даже компактный вид превышает 3950 символов — аккуратно обрезаем по абзацам
+    if len(full_text) > 3950:
+        cut_idx = full_text.rfind("\n\n", 0, 3850)
+        if cut_idx == -1:
+            cut_idx = 3850
+        full_text = (
+            full_text[:cut_idx]
+            + "\n\n<i>...Расписание сокращено. Для полного просмотра дней нажимайте кнопки выше 👆</i>"
+        )
+
+    return full_text
 
 
 def find_next_lessons_day(
@@ -615,23 +759,87 @@ def compute_schedule_diff(
 # --- Функции расписания преподавателей ---
 
 
+# Таблица транслитерации раскладки клавиатуры (английская -> русская)
+EN_TO_RU_LAYOUT = str.maketrans(
+    "qwertyuiop[]asdfghjkl;'zxcvbnm,./`",
+    "йцукенгшщзхъфывапролджэячсмитьбю.ё",
+)
+
+
+def normalize_search_text(text: str) -> str:
+    """Приводит строку поиска к нижнему регистру и нормализует пробелы и букву ё."""
+    return text.lower().replace("ё", "е").strip()
+
+
 def search_teachers(query: str, teachers: list[dict], limit: int = 8) -> list[dict]:
     """
-    Выполняет поиск преподавателей по подстроке в ФИО.
-    Возвращает список подходящих преподавателей [{'id': ..., 'name': ...}].
+    Выполняет устойчивый к опечаткам (fuzzy) поиск преподавателей:
+    - Точное совпадение и поиск по подстроке ФИО
+    - Автоматическое исправление неверной раскладки клавиатуры (qwerty -> йцукен)
+    - Нечеткий поиск (fuzzy) с учетом опечаток и пропущенных букв
+    - Ранжирование результатов по степени релевантности
     """
-    clean_query = query.lower().strip()
+    clean_query = query.strip()
     if not clean_query:
         return []
 
-    matched = []
+    norm_query = normalize_search_text(clean_query)
+    layout_query = normalize_search_text(clean_query.translate(EN_TO_RU_LAYOUT))
+
+    scored_teachers: list[tuple[float, dict]] = []
+
     for t in teachers:
         name = t.get("name", "")
-        if clean_query in name.lower():
-            matched.append(t)
-            if len(matched) >= limit:
+        if not name:
+            continue
+        norm_name = normalize_search_text(name)
+        name_words = norm_name.split()
+
+        best_score = 0.0
+
+        for q in (norm_query, layout_query):
+            if not q:
+                continue
+
+            # 1. Точное совпадение или подстрока
+            if q == norm_name:
+                best_score = max(best_score, 1.0)
+            elif q in norm_name:
+                if any(w.startswith(q) for w in name_words):
+                    best_score = max(best_score, 0.95)
+                else:
+                    best_score = max(best_score, 0.85)
+
+            # 2. Нечеткое совпадение по отдельным словам ФИО
+            for w in name_words:
+                ratio = SequenceMatcher(None, q, w).ratio()
+                if ratio > best_score:
+                    best_score = ratio
+                if len(q) >= 5:
+                    full_ratio = SequenceMatcher(None, q, norm_name).ratio()
+                    if full_ratio > best_score:
+                        best_score = full_ratio
+
+        # Порог отсечения: 0.70 для коротких запросов (<=4 букв), 0.60 для длинных
+        threshold = 0.70 if len(norm_query) <= 4 else 0.60
+        if best_score >= threshold:
+            scored_teachers.append((best_score, t))
+
+    # Сортируем по убыванию очков схожести
+    scored_teachers.sort(key=lambda x: x[0], reverse=True)
+
+    # Дедупликация по id
+    seen_ids = set()
+    result = []
+    for _, t in scored_teachers:
+        tid = t.get("id")
+        if tid not in seen_ids:
+            seen_ids.add(tid)
+            result.append(t)
+            if len(result) >= limit:
                 break
-    return matched
+
+    return result
 
 
 def format_teacher_day_schedule(

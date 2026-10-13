@@ -1,6 +1,6 @@
 import os
 import logging
-from datetime import time
+from datetime import time, datetime, date
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
@@ -11,12 +11,23 @@ load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 ADMIN_ID_RAW = os.getenv("ADMIN_ID", "").strip()
 ADMIN_ID = int(ADMIN_ID_RAW) if ADMIN_ID_RAW.isdigit() else None
+TELEGRAM_API_IP = os.getenv("TELEGRAM_API_IP", "149.154.167.220").strip()
 
 # Университет и группа по умолчанию
 GROUP_ID = int(os.getenv("GROUP_ID", "1671"))
 GROUP_NAME = os.getenv("GROUP_NAME", "ИС231")
 API_BASE_URL = os.getenv("API_BASE_URL", "https://cabinet.amursu.ru/public_api").rstrip("/")
 API_URL = f"{API_BASE_URL}/group/{GROUP_ID}"
+
+# Опорный понедельник начала семестра (для вычисления четности недели)
+SEMESTER_ANCHOR_STR = os.getenv("SEMESTER_ANCHOR_MONDAY", "2026-08-31").strip()
+try:
+    SEMESTER_ANCHOR_MONDAY = datetime.strptime(SEMESTER_ANCHOR_STR, "%Y-%m-%d").date()
+except Exception:
+    SEMESTER_ANCHOR_MONDAY = date(2026, 8, 31)
+
+# Интервал предварительного уведомления о паре (в минутах)
+LESSON_REMINDER_MINUTES = int(os.getenv("LESSON_REMINDER_MINUTES", "15"))
 
 # Хранилище и кэш
 DB_PATH = os.getenv("DB_PATH", "bot_data.db")

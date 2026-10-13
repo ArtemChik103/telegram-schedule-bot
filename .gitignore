@@ -35,6 +35,7 @@ env/
 *.db-wal
 *.db-shm
 bot_data.db
+data/
 schedule_cache.json
 
 # IDEs

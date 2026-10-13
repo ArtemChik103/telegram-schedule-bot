@@ -6,7 +6,8 @@ import sys
 import os
 import socket
 
-# Патч DNS для Telegram API: принудительный маршрут на доступный IP 149.154.167.220 (обход блокировок хостинга/ТСПУ)
+# Патч DNS для Telegram API: принудительный маршрут на доступный IP (обход блокировок хостинга/ТСПУ)
+TELEGRAM_API_IP = os.getenv("TELEGRAM_API_IP", "149.154.167.220").strip()
 _orig_getaddrinfo = socket.getaddrinfo
 
 
@@ -16,14 +17,19 @@ def _telegram_dns_patch(host, port, family=0, type=0, proto=0, flags=0):
         if isinstance(host, bytes)
         else str(host or "")
     )
-    if host_str.rstrip(".").lower() == "api.telegram.org":
+    if (
+        TELEGRAM_API_IP
+        and TELEGRAM_API_IP.lower() not in ("none", "off", "disabled", "false", "")
+        and host_str.rstrip(".").lower() == "api.telegram.org"
+    ):
         return [
-            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("149.154.167.220", port))
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", (TELEGRAM_API_IP, port))
         ]
     return _orig_getaddrinfo(host, port, family, type, proto, flags)
 
 
-socket.getaddrinfo = _telegram_dns_patch
+if TELEGRAM_API_IP and TELEGRAM_API_IP.lower() not in ("none", "off", "disabled", "false", ""):
+    socket.getaddrinfo = _telegram_dns_patch
 
 # Добавляем корневую директорию проекта в sys.path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

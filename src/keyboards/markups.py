@@ -70,10 +70,15 @@ def get_settings_inline_keyboard(user: dict | None) -> InlineKeyboardMarkup:
     )
 
     morning_on = user.get("notify_morning", 0) if user else 0
-    morning_icon = "🔔 ВКЛ (07:30)" if morning_on else "🔕 ВЫКЛ"
+    morning_time = user.get("notify_morning_time", "07:30") if user else "07:30"
+    morning_icon = "🔔 ВКЛ" if morning_on else "🔕 ВЫКЛ"
 
     evening_on = user.get("notify_evening", 0) if user else 0
-    evening_icon = "🔔 ВКЛ (20:00)" if evening_on else "🔕 ВЫКЛ"
+    evening_time = user.get("notify_evening_time", "20:00") if user else "20:00"
+    evening_icon = "🔔 ВКЛ" if evening_on else "🔕 ВЫКЛ"
+
+    lesson_on = user.get("notify_lesson_reminder", 0) if user else 0
+    lesson_icon = "🔔 ВКЛ" if lesson_on else "🔕 ВЫКЛ"
 
     only_lessons = user.get("notify_only_with_lessons", 1) if user else 1
     only_lessons_icon = "😴 ВКЛ (тишина)" if only_lessons else "🔔 Всегда"
@@ -90,15 +95,29 @@ def get_settings_inline_keyboard(user: dict | None) -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(
-                f"🌅 Утренний дайджест: {morning_icon}",
+                f"🌅 Утро: {morning_icon}",
                 callback_data="toggle_notif_morning",
-            )
+            ),
+            InlineKeyboardButton(
+                f"⏰ {morning_time}",
+                callback_data="pick_time_morning",
+            ),
         ],
         [
             InlineKeyboardButton(
-                f"🌙 Вечерний дайджест: {evening_icon}",
+                f"🌙 Вечер: {evening_icon}",
                 callback_data="toggle_notif_evening",
-            )
+            ),
+            InlineKeyboardButton(
+                f"⏰ {evening_time}",
+                callback_data="pick_time_evening",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                f"🔔 До пары (15м): {lesson_icon}",
+                callback_data="toggle_notif_lesson",
+            ),
         ],
         [
             InlineKeyboardButton(
@@ -114,6 +133,29 @@ def get_settings_inline_keyboard(user: dict | None) -> InlineKeyboardMarkup:
         ],
     ]
     return InlineKeyboardMarkup(keyboard)
+
+
+def get_digest_time_keyboard(digest_type: str) -> InlineKeyboardMarkup:
+    """Клавиатура быстрого выбора времени рассылки (утро или вечер)."""
+    if digest_type == "morning":
+        options = ["06:30", "07:00", "07:30", "08:00", "08:30", "09:00"]
+    else:
+        options = ["18:00", "19:00", "20:00", "20:30", "21:00", "22:00"]
+
+    buttons = []
+    row = []
+    for opt in options:
+        row.append(
+            InlineKeyboardButton(opt, callback_data=f"set_time_{digest_type}_{opt}")
+        )
+        if len(row) == 3:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+
+    buttons.append([InlineKeyboardButton("⬅️ Назад в настройки", callback_data="settings_back")])
+    return InlineKeyboardMarkup(buttons)
 
 
 def get_subgroup_select_keyboard() -> InlineKeyboardMarkup:

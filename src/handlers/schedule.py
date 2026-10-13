@@ -162,6 +162,42 @@ async def send_week_menu(
     )
 
 
+def split_telegram_message(text: str, max_chunk_size: int = 3900) -> list[str]:
+    """Разбивает длинный HTML-текст на части по абзацам или разделителям во избежание лимита в 4096 символов."""
+    if len(text) <= max_chunk_size:
+        return [text]
+
+    chunks = []
+    current_chunk = ""
+    separator = "\n\n━━━━━━━━━━━━━━━━━━━━━\n\n"
+    blocks = text.split(separator)
+    if len(blocks) > 1:
+        for block in blocks:
+            piece = block if not current_chunk else separator + block
+            if len(current_chunk) + len(piece) <= max_chunk_size:
+                current_chunk += piece
+            else:
+                if current_chunk:
+                    chunks.append(current_chunk)
+                current_chunk = block
+        if current_chunk:
+            chunks.append(current_chunk)
+    else:
+        paragraphs = text.split("\n\n")
+        for para in paragraphs:
+            piece = para if not current_chunk else "\n\n" + para
+            if len(current_chunk) + len(piece) <= max_chunk_size:
+                current_chunk += piece
+            else:
+                if current_chunk:
+                    chunks.append(current_chunk)
+                current_chunk = para
+        if current_chunk:
+            chunks.append(current_chunk)
+
+    return chunks if chunks else [text[:max_chunk_size], text[max_chunk_size:]]
+
+
 async def week_callback_handler(update: Update, context: CallbackContext) -> None:
     """Обработчик интерактивных кнопок навигации по неделе."""
     query = update.callback_query
@@ -236,20 +272,40 @@ async def week_callback_handler(update: Update, context: CallbackContext) -> Non
             if "Message is not modified" not in str(e):
                 logger.warning(f"Ошибка при switch_week: {e}")
 
-    # 3. Просмотр всей недели целиком
+    # 3. Просмотр всей недели целиком с защитой от превышения лимита 4096 символов
     elif data.startswith("full_week_"):
         is_next = "next" in data
         full_text = fallback_note + format_full_week_schedule(
             schedule_data, is_next_week=is_next, subgroup=subgroup
         )
         markup = get_week_inline_keyboard(is_next_week=is_next, active_day=None)
+        chunks = split_telegram_message(full_text, max_chunk_size=3900)
 
         try:
-            await query.edit_message_text(
-                text=full_text,
-                reply_markup=markup,
-                parse_mode=ParseMode.HTML,
-            )
+            if len(chunks) == 1:
+                await query.edit_message_text(
+                    text=chunks[0],
+                    reply_markup=markup,
+                    parse_mode=ParseMode.HTML,
+                )
+            else:
+                await query.edit_message_text(
+                    text=chunks[0],
+                    parse_mode=ParseMode.HTML,
+                )
+                chat_id = query.message.chat_id if query.message else update.effective_chat.id
+                for chunk in chunks[1:-1]:
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=chunk,
+                        parse_mode=ParseMode.HTML,
+                    )
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=chunks[-1],
+                    reply_markup=markup,
+                    parse_mode=ParseMode.HTML,
+                )
         except (TimedOut, NetworkError) as e:
             logger.warning(f"Сетевой сбой при показе полной недели: {e}")
         except BadRequest as e:

@@ -67,7 +67,41 @@ async def test_database_lifecycle():
         stats = await db.get_bot_stats()
         assert "total_users" in stats
         assert stats["total_users"] == 1
+        assert "lesson_notif" in stats
         assert "active_homework" not in stats
+
+        # 8. Тест переключения напоминания до пары (lesson) и персонального времени дайджестов
+        user2 = await db.register_or_update_user(user_id=67890, username="student2", first_name="Иван")
+        assert user2["notify_lesson_reminder"] == 0
+
+        # Включаем напоминание до пары
+        lesson_on = await db.toggle_notification(67890, "lesson")
+        assert lesson_on is True
+        lesson_users = await db.get_users_for_lesson_reminders()
+        assert len(lesson_users) == 1
+        assert lesson_users[0]["user_id"] == 67890
+
+        # Настраиваем персональное время дайджеста
+        await db.update_user_digest_time(67890, "morning", "08:15")
+        await db.update_user_digest_time(67890, "evening", "21:45")
+
+        u2_data = await db.get_user(67890)
+        assert u2_data["notify_morning_time"] == "08:15"
+        assert u2_data["notify_morning"] == 1
+        assert u2_data["notify_evening_time"] == "21:45"
+        assert u2_data["notify_evening"] == 1
+
+        # Проверка выборки по конкретному времени
+        m_users_815 = await db.get_users_for_morning_digest(time_str="08:15")
+        assert len(m_users_815) == 1
+        assert m_users_815[0]["user_id"] == 67890
+
+        m_users_other = await db.get_users_for_morning_digest(time_str="07:30")
+        assert len(m_users_other) == 0
+
+        e_users_2145 = await db.get_users_for_evening_digest(time_str="21:45")
+        assert len(e_users_2145) == 1
+        assert e_users_2145[0]["user_id"] == 67890
 
     finally:
         await db.close()

@@ -32,6 +32,25 @@ def test_search_teachers():
     # Не найдено
     assert search_teachers("Сидоров", sample_teachers) == []
 
+    # Нечеткий поиск (опечатки)
+    res_typo = search_teachers("иваноф", sample_teachers)
+    assert len(res_typo) >= 1
+    assert res_typo[0]["id"] in (1, 3)
+
+    # Опечатка в фамилии: "рябава" -> "Рябова"
+    res_ryab = search_teachers("рябава", sample_teachers)
+    assert len(res_ryab) == 1
+    assert res_ryab[0]["id"] == 4
+
+    # Исправление английской раскладки клавиатуры: "hz,jdf" -> "рябова", "gtnhjd" -> "петров"
+    res_layout_ryabova = search_teachers("hz,jdf", sample_teachers)
+    assert len(res_layout_ryabova) == 1
+    assert res_layout_ryabova[0]["id"] == 4
+
+    res_layout_petrov = search_teachers("gtnhjd", sample_teachers)
+    assert len(res_layout_petrov) == 1
+    assert res_layout_petrov[0]["id"] == 2
+
 
 def test_format_teacher_day_schedule():
     sample_data = {

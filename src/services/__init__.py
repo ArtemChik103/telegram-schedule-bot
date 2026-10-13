@@ -6,6 +6,9 @@ from .schedule_service import (
     format_day_schedule,
     format_full_week_schedule,
     get_current_status,
+    extract_building,
+    format_building_label,
+    search_teachers,
 )
 from .ics_generator import generate_ics_calendar
 
@@ -17,5 +20,8 @@ __all__ = [
     "format_day_schedule",
     "format_full_week_schedule",
     "get_current_status",
+    "extract_building",
+    "format_building_label",
+    "search_teachers",
     "generate_ics_calendar",
 ]

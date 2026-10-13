@@ -3,6 +3,7 @@
 .env
 .env.*
 bot_data.db*
+data/
 schedule_cache.json
 __pycache__
 *.pyc

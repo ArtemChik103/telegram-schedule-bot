@@ -1,3 +1,5 @@
+import os
+import shutil
 import json
 import logging
 import asyncio
@@ -11,9 +13,28 @@ logger = logging.getLogger(__name__)
 class Database:
     def __init__(self, db_path: str = DB_PATH):
         self.db_path = db_path
+        self._ensure_db_directory()
         self._conn: aiosqlite.Connection | None = None
         self._lock: asyncio.Lock | None = None
         self._lock_loop = None
+
+    def _ensure_db_directory(self) -> None:
+        """Создает родительскую директорию базы данных и при необходимости мигрирует существующий файл."""
+        try:
+            dir_name = os.path.dirname(os.path.abspath(self.db_path))
+            if dir_name:
+                os.makedirs(dir_name, exist_ok=True)
+
+            # Если целевой файл в подпапке еще не существует, но в корне есть старый bot_data.db
+            if not os.path.exists(self.db_path) and os.path.exists("bot_data.db"):
+                if os.path.abspath(self.db_path) != os.path.abspath("bot_data.db"):
+                    shutil.copyfile("bot_data.db", self.db_path)
+                    logger.info(f"Миграция базы данных: скопирован bot_data.db -> {self.db_path}")
+                    for ext in ("-wal", "-shm"):
+                        if os.path.exists("bot_data.db" + ext):
+                            shutil.copyfile("bot_data.db" + ext, self.db_path + ext)
+        except Exception as e:
+            logger.warning(f"Ошибка при подготовке директории БД ({self.db_path}): {e}")
 
     @property
     def lock(self) -> asyncio.Lock:
@@ -90,6 +111,7 @@ class Database:
                     notify_evening INTEGER DEFAULT 0,
                     notify_evening_time TEXT DEFAULT '20:00',
                     notify_only_with_lessons INTEGER DEFAULT 1,
+                    notify_lesson_reminder INTEGER DEFAULT 0,
                     is_blocked INTEGER DEFAULT 0,
                     created_at TEXT NOT NULL,
                     last_active TEXT NOT NULL
@@ -104,6 +126,10 @@ class Database:
                     await conn.execute(
                         "ALTER TABLE users ADD COLUMN notify_only_with_lessons INTEGER DEFAULT 1;"
                     )
+                if "notify_lesson_reminder" not in user_cols:
+                    await conn.execute(
+                        "ALTER TABLE users ADD COLUMN notify_lesson_reminder INTEGER DEFAULT 0;"
+                    )
                 if "is_blocked" not in user_cols:
                     await conn.execute(
                         "ALTER TABLE users ADD COLUMN is_blocked INTEGER DEFAULT 0;"
@@ -115,6 +141,9 @@ class Database:
             )
             await conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_users_evening ON users(notify_evening);"
+            )
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_users_lesson ON users(notify_lesson_reminder);"
             )
             await conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_users_group ON users(group_id);"
@@ -216,9 +245,9 @@ class Database:
                         user_id, username, first_name, group_id, subgroup,
                         notify_morning, notify_morning_time,
                         notify_evening, notify_evening_time,
-                        notify_only_with_lessons, is_blocked,
+                        notify_only_with_lessons, notify_lesson_reminder, is_blocked,
                         created_at, last_active
-                    ) VALUES (?, ?, ?, 1671, 0, 0, '07:30', 0, '20:00', 1, 0, ?, ?)
+                    ) VALUES (?, ?, ?, 1671, 0, 0, '07:30', 0, '20:00', 1, 0, 0, ?, ?)
                     """,
                     (user_id, username, first_name, now_str, now_str),
                 )
@@ -263,11 +292,12 @@ class Database:
             await conn.commit()
 
     async def toggle_notification(self, user_id: int, notif_type: str) -> bool:
-        """Переключает статус уведомления (morning, evening, only_lessons)."""
+        """Переключает статус уведомления (morning, evening, only_lessons, lesson)."""
         col_map = {
             "morning": "notify_morning",
             "evening": "notify_evening",
             "only_lessons": "notify_only_with_lessons",
+            "lesson": "notify_lesson_reminder",
         }
         column = col_map.get(notif_type, "notify_morning")
         async with self.lock:
@@ -286,6 +316,19 @@ class Database:
             await conn.commit()
             return bool(new_state)
 
+    async def update_user_digest_time(self, user_id: int, digest_type: str, time_str: str) -> bool:
+        """Обновляет индивидуальное время рассылки дайджеста (morning / evening) и включает ее."""
+        col_time = "notify_morning_time" if digest_type == "morning" else "notify_evening_time"
+        col_enabled = "notify_morning" if digest_type == "morning" else "notify_evening"
+        async with self.lock:
+            conn = await self._get_conn()
+            await conn.execute(
+                f"UPDATE users SET {col_time} = ?, {col_enabled} = 1 WHERE user_id = ?",
+                (time_str, user_id),
+            )
+            await conn.commit()
+            return True
+
     async def mark_user_blocked(self, user_id: int) -> None:
         """Отмечает пользователя как заблокировавшего бота."""
         async with self.lock:
@@ -295,29 +338,48 @@ class Database:
                 UPDATE users SET
                     is_blocked = 1,
                     notify_morning = 0,
-                    notify_evening = 0
+                    notify_evening = 0,
+                    notify_lesson_reminder = 0
                 WHERE user_id = ?
                 """,
                 (user_id,),
             )
             await conn.commit()
 
-    async def get_users_for_morning_digest(self) -> list[dict]:
-        """Возвращает пользователей с включенными утренними уведомлениями."""
+    async def get_users_for_morning_digest(self, time_str: str | None = None) -> list[dict]:
+        """Возвращает пользователей с включенными утренними уведомлениями (опционально по конкретному времени)."""
         async with self.lock:
             conn = await self._get_conn()
-            async with conn.execute(
-                "SELECT * FROM users WHERE notify_morning = 1 AND is_blocked = 0"
-            ) as cursor:
+            if time_str:
+                sql = "SELECT * FROM users WHERE notify_morning = 1 AND is_blocked = 0 AND notify_morning_time = ?"
+                params = (time_str,)
+            else:
+                sql = "SELECT * FROM users WHERE notify_morning = 1 AND is_blocked = 0"
+                params = ()
+            async with conn.execute(sql, params) as cursor:
                 rows = await cursor.fetchall()
                 return [dict(r) for r in rows]
 
-    async def get_users_for_evening_digest(self) -> list[dict]:
-        """Возвращает пользователей с включенными вечерними уведомлениями."""
+    async def get_users_for_evening_digest(self, time_str: str | None = None) -> list[dict]:
+        """Возвращает пользователей с включенными вечерними уведомлениями (опционально по конкретному времени)."""
+        async with self.lock:
+            conn = await self._get_conn()
+            if time_str:
+                sql = "SELECT * FROM users WHERE notify_evening = 1 AND is_blocked = 0 AND notify_evening_time = ?"
+                params = (time_str,)
+            else:
+                sql = "SELECT * FROM users WHERE notify_evening = 1 AND is_blocked = 0"
+                params = ()
+            async with conn.execute(sql, params) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(r) for r in rows]
+
+    async def get_users_for_lesson_reminders(self) -> list[dict]:
+        """Возвращает пользователей с включенными уведомлениями за 10-15 мин до начала пары."""
         async with self.lock:
             conn = await self._get_conn()
             async with conn.execute(
-                "SELECT * FROM users WHERE notify_evening = 1 AND is_blocked = 0"
+                "SELECT * FROM users WHERE notify_lesson_reminder = 1 AND is_blocked = 0"
             ) as cursor:
                 rows = await cursor.fetchall()
                 return [dict(r) for r in rows]
@@ -346,6 +408,8 @@ class Database:
                 morning_notif = (await cur.fetchone())[0]
             async with conn.execute("SELECT COUNT(*) FROM users WHERE notify_evening = 1") as cur:
                 evening_notif = (await cur.fetchone())[0]
+            async with conn.execute("SELECT COUNT(*) FROM users WHERE notify_lesson_reminder = 1") as cur:
+                lesson_notif = (await cur.fetchone())[0]
             async with conn.execute("SELECT COUNT(*) FROM users WHERE is_blocked = 1") as cur:
                 blocked_users = (await cur.fetchone())[0]
 
@@ -354,6 +418,7 @@ class Database:
                 "active_today": active_today,
                 "morning_notif": morning_notif,
                 "evening_notif": evening_notif,
+                "lesson_notif": lesson_notif,
                 "blocked_users": blocked_users,
             }
 

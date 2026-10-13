@@ -7,7 +7,7 @@ from telegram.ext import (
     filters,
 )
 from telegram.request import HTTPXRequest
-from src.config import TELEGRAM_TOKEN, GROUP_ID, setup_logging
+from src.config import TELEGRAM_TOKEN, GROUP_ID, TELEGRAM_API_IP, setup_logging
 from src.database.db import db
 from src.api.client import api_client
 from src.services.notification_service import setup_scheduled_jobs
@@ -82,14 +82,19 @@ def _telegram_dns_patch(host, port, family=0, type=0, proto=0, flags=0):
         if isinstance(host, bytes)
         else str(host or "")
     )
-    if host_str.rstrip(".").lower() == "api.telegram.org":
+    if (
+        TELEGRAM_API_IP
+        and TELEGRAM_API_IP.lower() not in ("none", "off", "disabled", "false", "")
+        and host_str.rstrip(".").lower() == "api.telegram.org"
+    ):
         return [
-            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("149.154.167.220", port))
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", (TELEGRAM_API_IP, port))
         ]
     return _orig_getaddrinfo(host, port, family, type, proto, flags)
 
 
-socket.getaddrinfo = _telegram_dns_patch
+if TELEGRAM_API_IP and TELEGRAM_API_IP.lower() not in ("none", "off", "disabled", "false", ""):
+    socket.getaddrinfo = _telegram_dns_patch
 
 
 class ResilientHTTPXRequest(HTTPXRequest):
@@ -227,7 +232,7 @@ def create_application() -> Application:
     application.add_handler(
         CallbackQueryHandler(
             settings_callback_handler,
-            pattern="^(toggle_notif_|settings_|set_subgroup_)",
+            pattern="^(toggle_notif_|settings_|set_subgroup_|pick_time_|set_time_)",
         )
     )
     application.add_handler(

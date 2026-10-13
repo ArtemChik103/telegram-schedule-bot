@@ -30,3 +30,12 @@ async def test_api_client_fallback_to_db():
         data, is_fallback = await client.get_group_schedule(1671, force_refresh=True)
         assert data == {"group_name": "ИС231_offline"}
         assert is_fallback is True
+
+
+def test_get_client_instantiation():
+    """Проверяет, что _get_client корректно создает httpx.AsyncClient без NameError."""
+    client = AmSUApiClient()
+    http_client = client._get_client()
+    assert http_client is not None
+    assert not http_client.is_closed
+

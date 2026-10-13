@@ -355,3 +355,90 @@ def test_week_parity_with_cached_date():
     # Для следующего понедельника
     parity = get_week_type(cached_schedule, target_date=next_monday)
     assert parity == 2
+
+
+def test_extract_building():
+    from src.services.schedule_service import extract_building, format_building_label
+    assert extract_building("204 (ЗТ)") == "ЗТ"
+    assert extract_building("326 (5)") == "5"
+    assert extract_building("онлайн") == "Онлайн"
+    assert extract_building("с/з (ЗТ)") == "ЗТ"
+    assert extract_building("корп. 7 ауд 101") == "7"
+    assert extract_building("") is None
+    assert extract_building("304") is None
+
+    assert "корпус 5" in format_building_label("5")
+    assert "корпус ЗТ" in format_building_label("ЗТ")
+    assert "онлайн" in format_building_label("Онлайн")
+
+
+def test_building_change_in_day_schedule():
+    sample_data = {
+        "current_week": 1,
+        "schedule_lines": [
+            {"lesson": 1, "begin_time": "2000-01-01T08:15:00.000Z", "end_time": "2000-01-01T09:45:00.000Z"},
+            {"lesson": 2, "begin_time": "2000-01-01T09:55:00.000Z", "end_time": "2000-01-01T11:25:00.000Z"},
+        ],
+        "timetable_tamplate_lines": [
+            {
+                "weekday": 1,
+                "parity": 1,
+                "lesson": 1,
+                "discipline_str": "Программирование",
+                "classroom_str": "204 (ЗТ)",
+                "person_str": "Иванов",
+            },
+            {
+                "weekday": 1,
+                "parity": 1,
+                "lesson": 2,
+                "discipline_str": "Физика",
+                "classroom_str": "326 (5)",
+                "person_str": "Петров",
+            },
+        ],
+    }
+    today = datetime.now().date()
+    monday = today - timedelta(days=today.weekday())
+    text = format_day_schedule(sample_data, target_date=monday)
+    assert "смена корпуса" in text.lower()
+    assert "ЗТ" in text
+    assert "5" in text
+
+
+def test_format_full_week_schedule_length_protection():
+    from src.services.schedule_service import format_full_week_schedule
+    # Создаем плотное расписание на 6 дней по 5 пар в день с длинными названиями
+    lines = []
+    for day in range(1, 7):
+        for les in range(1, 6):
+            lines.append({
+                "weekday": day,
+                "parity": 1,
+                "lesson": les,
+                "discipline_str": f"Длинное наименование сложной дисциплины номер {day}_{les}",
+                "classroom_str": f"40{les} (ЗТ)",
+                "person_str": f"ОченьДлинныйПреподаватель Преподаватель {les}",
+                "stream_with": ["ИС231", "ИС232", "ИС233", "ИС234"],
+            })
+    heavy_data = {
+        "current_week": 1,
+        "timetable_tamplate_lines": lines,
+    }
+    text = format_full_week_schedule(heavy_data, is_next_week=False)
+    # Текст обязан укладываться в лимит Telegram (4096 символов) благодаря автоматическому компактному режиму
+    assert len(text) <= 4096
+    assert "Расписание на текущая неделю" in text or "Расписание" in text
+
+
+def test_split_telegram_message():
+    from src.handlers.schedule import split_telegram_message
+    short_text = "Короткий текст расписания"
+    assert split_telegram_message(short_text, max_chunk_size=100) == [short_text]
+
+    long_text = ("Блок 1\n\n━━━━━━━━━━━━━━━━━━━━━\n\n" * 50)
+    chunks = split_telegram_message(long_text, max_chunk_size=500)
+    assert len(chunks) > 1
+    for chunk in chunks:
+        assert len(chunk) <= 500
+

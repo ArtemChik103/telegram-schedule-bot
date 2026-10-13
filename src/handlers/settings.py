@@ -7,6 +7,7 @@ from src.database.db import db
 from src.keyboards.markups import (
     get_settings_inline_keyboard,
     get_subgroup_select_keyboard,
+    get_digest_time_keyboard,
 )
 
 logger = logging.getLogger(__name__)
@@ -46,8 +47,9 @@ async def cmd_settings(update: Update, context: CallbackContext) -> None:
     text = (
         f"⚙️ <b>Настройки {title_label}:</b>\n\n"
         "• <b>Подгруппа</b> — фильтрует расписание (для беседы обычно «Вся группа»).\n"
-        "• <b>Утренний дайджест (07:30)</b> — бот автоматически присылает расписание на сегодня прямо сюда.\n"
-        "• <b>Вечерний дайджест (20:00)</b> — бот присылает расписание на завтра прямо сюда.\n"
+        "• <b>Утренний дайджест</b> — расписание на сегодня прямо сюда в выбранное время (кнопка ⏰).\n"
+        "• <b>Вечерний дайджест</b> — расписание на завтра прямо сюда в выбранное время (кнопка ⏰).\n"
+        "• <b>Напоминание до пары</b> — push за 10-15 минут с аудиторией и предупреждением о переходе в другой корпус.\n"
         "• <b>Без пар не будить</b> — отключает утреннюю рассылку в дни, когда нет пар (выходные, праздники).\n"
         "• <b>Экспорт в календарь</b> — формирует файл <code>.ics</code> для Google Calendar / Apple Calendar."
     )
@@ -91,9 +93,10 @@ async def settings_callback_handler(update: Update, context: CallbackContext) ->
     # Переключение утреннего дайджеста
     if data == "toggle_notif_morning":
         new_state = await db.toggle_notification(target_id, "morning")
-        status_str = f"включен (07:30) {target_desc}".strip() if new_state else f"выключен {target_desc}".strip()
-        await _safe_answer(f"Утренний дайджест {status_str}!")
         user = await db.get_user(target_id)
+        m_time = user.get("notify_morning_time", "07:30") if user else "07:30"
+        status_str = f"включен ({m_time}) {target_desc}".strip() if new_state else f"выключен {target_desc}".strip()
+        await _safe_answer(f"Утренний дайджест {status_str}!")
         try:
             await query.edit_message_reply_markup(
                 reply_markup=get_settings_inline_keyboard(user)
@@ -104,8 +107,22 @@ async def settings_callback_handler(update: Update, context: CallbackContext) ->
     # Переключение вечернего дайджеста
     elif data == "toggle_notif_evening":
         new_state = await db.toggle_notification(target_id, "evening")
-        status_str = f"включен (20:00) {target_desc}".strip() if new_state else f"выключен {target_desc}".strip()
+        user = await db.get_user(target_id)
+        e_time = user.get("notify_evening_time", "20:00") if user else "20:00"
+        status_str = f"включен ({e_time}) {target_desc}".strip() if new_state else f"выключен {target_desc}".strip()
         await _safe_answer(f"Вечерний дайджест {status_str}!")
+        try:
+            await query.edit_message_reply_markup(
+                reply_markup=get_settings_inline_keyboard(user)
+            )
+        except (BadRequest, TimedOut, NetworkError):
+            pass
+
+    # Переключение уведомления перед парой (за 10-15 мин)
+    elif data == "toggle_notif_lesson":
+        new_state = await db.toggle_notification(target_id, "lesson")
+        status_str = f"включены (за 15 мин) {target_desc}".strip() if new_state else f"выключены {target_desc}".strip()
+        await _safe_answer(f"Напоминания перед парами {status_str}!")
         user = await db.get_user(target_id)
         try:
             await query.edit_message_reply_markup(
@@ -113,6 +130,35 @@ async def settings_callback_handler(update: Update, context: CallbackContext) ->
             )
         except (BadRequest, TimedOut, NetworkError):
             pass
+
+    # Выбор времени утреннего дайджеста
+    elif data == "pick_time_morning":
+        await _safe_answer()
+        await query.edit_message_text(
+            "🌅 <b>Выберите время утреннего дайджеста (расписание на сегодня):</b>",
+            reply_markup=get_digest_time_keyboard("morning"),
+            parse_mode=ParseMode.HTML,
+        )
+
+    # Выбор времени вечернего дайджеста
+    elif data == "pick_time_evening":
+        await _safe_answer()
+        await query.edit_message_text(
+            "🌙 <b>Выберите время вечернего дайджеста (расписание на завтра):</b>",
+            reply_markup=get_digest_time_keyboard("evening"),
+            parse_mode=ParseMode.HTML,
+        )
+
+    # Установка конкретного времени дайджеста
+    elif data.startswith("set_time_"):
+        parts = data.split("_")
+        digest_type = parts[2]
+        chosen_time = parts[3]
+        await db.update_user_digest_time(target_id, digest_type, chosen_time)
+        t_label = "Утренний дайджест" if digest_type == "morning" else "Вечерний дайджест"
+        await _safe_answer(f"{t_label} перенесен на {chosen_time}!")
+        user = await db.get_user(target_id)
+        await cmd_settings(update, context)
 
     # Переключение опции «Без пар не будить»
     elif data == "toggle_notif_only_lessons":
