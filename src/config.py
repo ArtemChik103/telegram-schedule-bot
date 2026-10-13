@@ -19,6 +19,12 @@ GROUP_NAME = os.getenv("GROUP_NAME", "ИС231")
 API_BASE_URL = os.getenv("API_BASE_URL", "https://cabinet.amursu.ru/public_api").rstrip("/")
 API_URL = f"{API_BASE_URL}/group/{GROUP_ID}"
 
+# Настройки таймаутов API АмГУ и оффлайн-режим
+AMSU_CONNECT_TIMEOUT = float(os.getenv("AMSU_CONNECT_TIMEOUT", "1.5"))
+AMSU_READ_TIMEOUT = float(os.getenv("AMSU_READ_TIMEOUT", "3.0"))
+CIRCUIT_BREAKER_COOLDOWN = float(os.getenv("CIRCUIT_BREAKER_COOLDOWN", "300.0"))
+OFFLINE_MODE = os.getenv("OFFLINE_MODE", "false").lower() in ("true", "1", "yes")
+
 # Опорный понедельник начала семестра (для вычисления четности недели)
 SEMESTER_ANCHOR_STR = os.getenv("SEMESTER_ANCHOR_MONDAY", "2026-08-31").strip()
 try:

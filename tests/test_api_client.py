@@ -34,8 +34,50 @@ async def test_api_client_fallback_to_db():
 
 def test_get_client_instantiation():
     """Проверяет, что _get_client корректно создает httpx.AsyncClient без NameError."""
-    client = AmSUApiClient()
+    client = AmSUApiClient(connect_timeout=1.5, read_timeout=3.0)
     http_client = client._get_client()
     assert http_client is not None
     assert not http_client.is_closed
+    assert http_client.timeout.connect == 1.5
+    assert http_client.timeout.read == 3.0
+
+
+@pytest.mark.asyncio
+async def test_api_client_circuit_breaker():
+    """Проверяет, что при сбое API срабатывает Circuit Breaker и повторные вызовы не идут в сеть."""
+    client = AmSUApiClient(circuit_cooldown=60)
+    client.clear_memory_cache()
+
+    # 1. Первый сбой размыкает цепь
+    with patch("httpx.AsyncClient.get", side_effect=Exception("Timeout")), \
+         patch("src.database.db.db.load_schedule", new_callable=AsyncMock) as mock_load:
+        mock_load.return_value = {"group_name": "cached_offline"}
+        data, is_fb = await client.get_group_schedule(1671, force_refresh=True)
+        assert is_fb is True
+        assert client.is_circuit_open() is True
+
+    # 2. Второй вызов: сеть даже не дергается (быстрый возврат)
+    with patch("httpx.AsyncClient.get") as mock_get, \
+         patch("src.database.db.db.load_schedule", new_callable=AsyncMock) as mock_load:
+        mock_load.return_value = {"group_name": "cached_offline"}
+        client.clear_memory_cache()
+        data, is_fb = await client.get_group_schedule(1671, force_refresh=False)
+        assert is_fb is True
+        mock_get.assert_not_called()  # Сетевой запрос вообще не вызывался!
+
+
+@pytest.mark.asyncio
+async def test_api_client_offline_mode():
+    """Проверяет, что при OFFLINE_MODE=True сеть полностью игнорируется."""
+    client = AmSUApiClient(offline_mode=True)
+    assert client.is_circuit_open() is True
+
+    with patch("httpx.AsyncClient.get") as mock_get, \
+         patch("src.database.db.db.load_schedule", new_callable=AsyncMock) as mock_load:
+        mock_load.return_value = {"group_name": "pure_offline"}
+        data, is_fb = await client.get_group_schedule(1671, force_refresh=False)
+        assert data == {"group_name": "pure_offline"}
+        assert is_fb is True
+        mock_get.assert_not_called()
+
 

@@ -4,22 +4,60 @@ import logging
 import asyncio
 from datetime import datetime
 import httpx
-from src.config import API_BASE_URL, CACHE_TTL_SECONDS, GROUP_ID, TIMEZONE
+from src.config import (
+    API_BASE_URL,
+    CACHE_TTL_SECONDS,
+    GROUP_ID,
+    TIMEZONE,
+    AMSU_CONNECT_TIMEOUT,
+    AMSU_READ_TIMEOUT,
+    CIRCUIT_BREAKER_COOLDOWN,
+    OFFLINE_MODE,
+)
 from src.database.db import db
 
 logger = logging.getLogger(__name__)
 
 
 class AmSUApiClient:
-    def __init__(self, base_url: str = API_BASE_URL, ttl: int = CACHE_TTL_SECONDS):
+    def __init__(
+        self,
+        base_url: str = API_BASE_URL,
+        ttl: int = CACHE_TTL_SECONDS,
+        connect_timeout: float = AMSU_CONNECT_TIMEOUT,
+        read_timeout: float = AMSU_READ_TIMEOUT,
+        circuit_cooldown: float = CIRCUIT_BREAKER_COOLDOWN,
+        offline_mode: bool = OFFLINE_MODE,
+    ):
         self.base_url = base_url
         self.ttl = ttl
+        self.connect_timeout = connect_timeout
+        self.read_timeout = read_timeout
+        self.circuit_cooldown = circuit_cooldown
+        self.offline_mode = offline_mode
+        self._last_api_failure_time: float = 0
         # In-memory кэш: {group_id: (data, timestamp)}
         self._memory_cache: dict[int | str, tuple[dict | list, float]] = {}
         self._client: httpx.AsyncClient | None = None
         self._group_lock: asyncio.Lock | None = None
         self._teachers_list_lock: asyncio.Lock | None = None
         self._teacher_locks: dict[int, asyncio.Lock] = {}
+
+    def is_circuit_open(self) -> bool:
+        """Проверяет, активен ли быстрый оффлайн-режим (API недоступен или включен OFFLINE_MODE)."""
+        if self.offline_mode:
+            return True
+        if self._last_api_failure_time <= 0:
+            return False
+        return (time.time() - self._last_api_failure_time) < self.circuit_cooldown
+
+    def record_api_failure(self) -> None:
+        """Фиксирует сбой подключения к API и активирует оффлайн-режим на circuit_cooldown секунд."""
+        self._last_api_failure_time = time.time()
+
+    def record_api_success(self) -> None:
+        """Сбрасывает флаг сбоя при успешном ответе API."""
+        self._last_api_failure_time = 0
 
     @property
     def group_lock(self) -> asyncio.Lock:
@@ -51,7 +89,7 @@ class AmSUApiClient:
         if self._client is None or self._client.is_closed:
             proxy = os.getenv("AMSU_PROXY") or os.getenv("HTTP_PROXY") or None
             self._client = httpx.AsyncClient(
-                timeout=httpx.Timeout(10.0, connect=6.0),
+                timeout=httpx.Timeout(self.read_timeout, connect=self.connect_timeout),
                 headers={"User-Agent": "AmSU-Schedule-Bot/2.0"},
                 limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
                 proxy=proxy,
@@ -81,10 +119,17 @@ class AmSUApiClient:
             if now - cached_at < self.ttl:
                 return cached_data, False
 
+        # 2. Быстрый возврат из SQLite, если цепь разомкнута (API недоступен или OFFLINE_MODE)
+        if not force_refresh and self.is_circuit_open():
+            db_data = await db.load_schedule(group_id)
+            if db_data:
+                self._memory_cache[group_id] = (db_data, now)
+                return db_data, True
+
         data = None
         is_fallback = False
 
-        # 2. Захватываем блокировку для предотвращения thundering herd
+        # 3. Захватываем блокировку для предотвращения thundering herd
         async with self.group_lock:
             now = time.time()
             if not force_refresh and group_id in self._memory_cache:
@@ -92,13 +137,21 @@ class AmSUApiClient:
                 if now - cached_at < self.ttl:
                     return cached_data, False
 
+            if not force_refresh and self.is_circuit_open():
+                db_data = await db.load_schedule(group_id)
+                if db_data:
+                    self._memory_cache[group_id] = (db_data, now)
+                    return db_data, True
+
             url = f"{self.base_url}/group/{group_id}"
             try:
                 client = self._get_client()
                 response = await client.get(url)
                 response.raise_for_status()
                 data = response.json()
+                self.record_api_success()
             except Exception as e:
+                self.record_api_failure()
                 logger.warning(
                     f"⚠️ API АмГУ недоступен ({url}): {e}. Загружаем из SQLite..."
                 )
@@ -108,7 +161,7 @@ class AmSUApiClient:
                     return db_data, True
                 return None, False
 
-        # 3. Обогащаем расписание группы информацией о потоках вне блокировки
+        # 4. Обогащаем расписание группы информацией о потоках вне блокировки
         try:
             await self.enrich_group_schedule_streams(data)
         except Exception as stream_err:
@@ -125,6 +178,9 @@ class AmSUApiClient:
         опрашивает расписания преподавателей и находит пары, где преподаватель
         ведет занятие одновременно у нашей группы и у других групп.
         """
+        if self.is_circuit_open():
+            return data
+
         lines = data.get("timetable_tamplate_lines", [])
         if not lines:
             return data
@@ -203,11 +259,29 @@ class AmSUApiClient:
             if now - cached_at < 3600 * 12:
                 return data
 
+        # Если цепь разомкнута (оффлайн), быстро берем из кэша или расписания группы
+        if not force_refresh and self.is_circuit_open():
+            if cache_key in self._memory_cache:
+                return self._memory_cache[cache_key][0]
+            sched_data = await db.load_schedule(GROUP_ID)
+            if sched_data:
+                from src.services.schedule_service import get_group_teachers
+                group_teachers = get_group_teachers(sched_data)
+                if group_teachers:
+                    self._memory_cache[cache_key] = (group_teachers, now)
+                    return group_teachers
+            return []
+
         async with self.teachers_list_lock:
             if not force_refresh and cache_key in self._memory_cache:
                 data, cached_at = self._memory_cache[cache_key]
                 if now - cached_at < 3600 * 12:
                     return data
+
+            if not force_refresh and self.is_circuit_open():
+                if cache_key in self._memory_cache:
+                    return self._memory_cache[cache_key][0]
+                return []
 
             url = f"{self.base_url}/teachers"
             try:
@@ -216,12 +290,21 @@ class AmSUApiClient:
                 response.raise_for_status()
                 payload = response.json()
                 teachers = payload.get("teachers", []) if isinstance(payload, dict) else payload
+                self.record_api_success()
                 self._memory_cache[cache_key] = (teachers, now)
                 return teachers
             except Exception as e:
+                self.record_api_failure()
                 logger.warning(f"Не удалось получить список преподавателей ({url}): {e}")
                 if cache_key in self._memory_cache:
                     return self._memory_cache[cache_key][0]
+                sched_data = await db.load_schedule(GROUP_ID)
+                if sched_data:
+                    from src.services.schedule_service import get_group_teachers
+                    group_teachers = get_group_teachers(sched_data)
+                    if group_teachers:
+                        self._memory_cache[cache_key] = (group_teachers, now)
+                        return group_teachers
                 return []
 
     async def get_teacher_schedule(
@@ -238,6 +321,11 @@ class AmSUApiClient:
             if now - cached_at < self.ttl:
                 return data
 
+        if not force_refresh and self.is_circuit_open():
+            if cache_key in self._memory_cache:
+                return self._memory_cache[cache_key][0]
+            return None
+
         t_lock = self.get_teacher_lock(teacher_id)
         async with t_lock:
             if not force_refresh and cache_key in self._memory_cache:
@@ -245,17 +333,24 @@ class AmSUApiClient:
                 if now - cached_at < self.ttl:
                     return data
 
+            if not force_refresh and self.is_circuit_open():
+                if cache_key in self._memory_cache:
+                    return self._memory_cache[cache_key][0]
+                return None
+
             url = f"{self.base_url}/teacher/{teacher_id}"
             try:
                 client = self._get_client()
                 response = await client.get(url)
                 response.raise_for_status()
                 data = response.json()
+                self.record_api_success()
                 if isinstance(data, dict):
                     data["_cached_at_date"] = datetime.now(TIMEZONE).strftime("%Y-%m-%d")
                 self._memory_cache[cache_key] = (data, now)
                 return data
             except Exception as e:
+                self.record_api_failure()
                 logger.warning(
                     f"Не удалось получить расписание преподавателя {teacher_id} ({url}): {e}"
                 )
