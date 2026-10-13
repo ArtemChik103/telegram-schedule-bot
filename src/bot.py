@@ -7,7 +7,17 @@ from telegram.ext import (
     filters,
 )
 from telegram.request import HTTPXRequest
-from src.config import TELEGRAM_TOKEN, GROUP_ID, TELEGRAM_API_IP, setup_logging
+from src.config import (
+    TELEGRAM_TOKEN,
+    GROUP_ID,
+    TELEGRAM_API_IP,
+    TELEGRAM_CONNECT_TIMEOUT,
+    TELEGRAM_READ_TIMEOUT,
+    TELEGRAM_WRITE_TIMEOUT,
+    TELEGRAM_POOL_TIMEOUT,
+    TELEGRAM_MAX_RETRIES,
+    setup_logging,
+)
 from src.database.db import db
 from src.api.client import api_client
 from src.services.notification_service import setup_scheduled_jobs
@@ -103,6 +113,10 @@ class ResilientHTTPXRequest(HTTPXRequest):
     сетевых сбоях и таймаутах Telegram API, устраняющий случайные дропы запросов.
     """
 
+    def __init__(self, *args, max_retries: int = TELEGRAM_MAX_RETRIES, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.max_retries = max_retries
+
     async def do_request(
         self,
         url: str,
@@ -115,25 +129,44 @@ class ResilientHTTPXRequest(HTTPXRequest):
     ) -> Tuple[int, bytes]:
         # Для getUpdates (поллинг) повторы не нужны, так как PTB сам управляет бесконечным циклом опроса
         is_get_updates = url.rstrip("/").endswith("getUpdates")
-        max_retries = 0 if is_get_updates else 2
+        retries = 0 if is_get_updates else self.max_retries
 
-        for attempt in range(max_retries + 1):
+        # Оптимизация таймаутов под нестабильный ТСПУ:
+        # Для getUpdates оставляем read_timeout для длинного polling, но connect_timeout быстрый.
+        # Для обычных запросов (sendMessage, answerCallbackQuery) убираем 20-30 секундные зависания.
+        eff_connect = connect_timeout
+        if isinstance(eff_connect, DefaultValue) or eff_connect is None or eff_connect > 3.0:
+            eff_connect = 3.0 if is_get_updates else 2.5
+
+        eff_read = read_timeout
+        if not is_get_updates and (isinstance(eff_read, DefaultValue) or eff_read is None or eff_read > 8.0):
+            eff_read = 8.0
+
+        eff_write = write_timeout
+        if not is_get_updates and (isinstance(eff_write, DefaultValue) or eff_write is None or eff_write > 8.0):
+            eff_write = 8.0
+
+        eff_pool = pool_timeout
+        if isinstance(eff_pool, DefaultValue) or eff_pool is None or eff_pool > 5.0:
+            eff_pool = 5.0
+
+        for attempt in range(retries + 1):
             try:
                 return await super().do_request(
                     url=url,
                     method=method,
                     request_data=request_data,
-                    read_timeout=read_timeout,
-                    write_timeout=write_timeout,
-                    connect_timeout=connect_timeout,
-                    pool_timeout=pool_timeout,
+                    read_timeout=eff_read,
+                    write_timeout=eff_write,
+                    connect_timeout=eff_connect,
+                    pool_timeout=eff_pool,
                 )
             except (TimedOut, NetworkError) as err:
-                if attempt < max_retries and "Pool timeout" not in str(err):
-                    backoff = 0.5 * (attempt + 1)
+                if attempt < retries and "Pool timeout" not in str(err):
+                    backoff = 0.1 * (attempt + 1)
                     logger.warning(
                         f"Временный сетевой сбой Telegram API ({err}). "
-                        f"Повтор {attempt + 1}/{max_retries} через {backoff}с..."
+                        f"Быстрый повтор {attempt + 1}/{retries} через {backoff:.1f}с..."
                     )
                     await asyncio.sleep(backoff)
                     continue
@@ -159,13 +192,14 @@ def create_application() -> Application:
 
     request = ResilientHTTPXRequest(
         connection_pool_size=16,
-        connect_timeout=20.0,
-        read_timeout=35.0,
-        write_timeout=25.0,
-        pool_timeout=15.0,
+        connect_timeout=TELEGRAM_CONNECT_TIMEOUT,
+        read_timeout=TELEGRAM_READ_TIMEOUT,
+        write_timeout=TELEGRAM_WRITE_TIMEOUT,
+        pool_timeout=TELEGRAM_POOL_TIMEOUT,
         media_write_timeout=40.0,
         http_version="1.1",
         socket_options=sock_opts,
+        max_retries=TELEGRAM_MAX_RETRIES,
     )
 
     application = (

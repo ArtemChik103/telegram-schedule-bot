@@ -26,7 +26,7 @@ async def test_resilient_httpx_request_retries_on_timeout():
 @pytest.mark.asyncio
 async def test_resilient_httpx_request_raises_after_max_retries():
     """Проверяет, что если сетевой сбой не уходит, исключение поднимается после исчерпания попыток."""
-    req = ResilientHTTPXRequest()
+    req = ResilientHTTPXRequest(max_retries=2)
     mock_super = AsyncMock(side_effect=TimedOut("Persistent timeout"))
 
     with patch.object(HTTPXRequest, "do_request", mock_super):
@@ -37,6 +37,25 @@ async def test_resilient_httpx_request_raises_after_max_retries():
             )
 
     assert mock_super.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_resilient_httpx_request_timeout_clamping():
+    """Проверяет, что таймауты эффективно урезаются для предотвращения долгих зависаний."""
+    req = ResilientHTTPXRequest()
+    mock_super = AsyncMock(return_value=(200, b'{"ok": true}'))
+
+    with patch.object(HTTPXRequest, "do_request", mock_super):
+        await req.do_request(
+            url="https://api.telegram.org/bot123/sendMessage",
+            method="POST",
+            connect_timeout=20.0,
+            read_timeout=35.0,
+        )
+
+    _, kwargs = mock_super.call_args
+    assert kwargs["connect_timeout"] == 2.5
+    assert kwargs["read_timeout"] == 8.0
 
 
 @pytest.mark.asyncio
